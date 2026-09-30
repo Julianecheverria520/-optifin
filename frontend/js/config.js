@@ -1,5 +1,5 @@
 // Configuración compartida por todas las páginas. 
-const API_BASE = "http://127.0.0.1:8000";
+const API_URL = "https://optifin-bhok.onrender.com";
 
 // --- SISTEMA DE SESIÓN ---
 let USUARIO_ACTUAL = null;
