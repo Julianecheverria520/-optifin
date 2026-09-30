@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiFin - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen">
+
+    <!-- Contenedor del Menú Lateral -->
+    <aside id="sidebar-container" class="w-64 bg-blue-900 text-white flex flex-col h-full shadow-lg"></aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-3xl font-bold text-gray-800">Dashboard</h2>
+            <div class="flex space-x-2">
+                <select id="mesSelect" class="border-gray-300 rounded-md p-2 border font-medium text-gray-700 shadow-sm" onchange="cargarDashboard()">
+                    <option value="1">Enero</option>
+                    <option value="2">Febrero</option>
+                    <option value="3">Marzo</option>
+                    <option value="4">Abril</option>
+                    <option value="5">Mayo</option>
+                    <option value="6">Junio</option>
+                    <option value="7">Julio</option>
+                    <option value="8">Agosto</option>
+                    <option value="9">Septiembre</option>
+                    <option value="10">Octubre</option>
+                    <option value="11">Noviembre</option>
+                    <option value="12">Diciembre</option>
+                </select>
+                <select id="anioSelect" class="border-gray-300 rounded-md p-2 border font-medium text-gray-700 shadow-sm" onchange="cargarDashboard()"></select>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow-sm border-t-4 border-green-500">
+                <p class="text-gray-500 text-sm font-semibold uppercase">Ingresos del Mes</p>
+                <p class="text-3xl font-bold text-gray-800 mt-2" id="total_ingresos">$0</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-sm border-t-4 border-red-500">
+                <p class="text-gray-500 text-sm font-semibold uppercase">Gastos del Mes</p>
+                <p class="text-3xl font-bold text-gray-800 mt-2" id="total_gastos">$0</p>
+                <p class="text-xs text-gray-400 mt-1 hidden" id="total_por_otros"></p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-sm border-t-4 border-blue-500">
+                <p class="text-gray-500 text-sm font-semibold uppercase">Balance del Mes</p>
+                <p class="text-3xl font-bold text-gray-800 mt-2" id="total_saldo">$0</p>
+                <p class="text-xs text-gray-400 mt-1">Ingresos menos gastos registrados</p>
+            </div>
+        </div>
+
+        <!-- Proyección: plan vs. real -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <h3 class="text-xl font-semibold mb-4 text-gray-800">Proyección del Mes</h3>
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 text-sm">
+                <div><p class="text-gray-500">Ingresos fijos planeados</p><p class="text-lg font-bold text-green-700" id="proy_ingresos">$0</p></div>
+                <div><p class="text-gray-500">Gastos fijos planeados</p><p class="text-lg font-bold text-red-600" id="proy_gastos_fijos">$0</p></div>
+                <div><p class="text-gray-500">Topes presupuestales</p><p class="text-lg font-bold text-blue-700" id="proy_presupuestos">$0</p></div>
+                <div><p class="text-gray-500">Disponible según el plan</p><p class="text-lg font-bold text-gray-800" id="proy_disponible">$0</p></div>
+            </div>
+            <div class="rounded-lg bg-gray-50 border border-gray-200 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                    <p class="text-sm text-gray-500" id="proy_saldo_label">Si se cumple lo planeado, terminarás el mes con</p>
+                    <p class="text-2xl font-bold" id="proy_saldo">$0</p>
+                    <p class="text-xs text-gray-400 mt-1" id="proy_saldo_nota"></p>
+                </div>
+                <div class="text-sm text-gray-600 space-y-1 md:text-right">
+                    <p>Por recibir: <span class="font-semibold text-green-700" id="proy_por_recibir">$0</span></p>
+                    <p>Por pagar: <span class="font-semibold text-red-600" id="proy_por_pagar">$0</span></p>
+                    <p>Presupuesto aún disponible: <span class="font-semibold text-blue-700" id="proy_ppto_restante">$0</span></p>
+                    <p id="proy_desvio_gastos" class="hidden font-semibold"></p>
+                    <p id="proy_desvio_ingresos" class="hidden font-semibold"></p>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-xl font-semibold mb-1 text-gray-800">Pagos y Cobros Fijos</h3>
+                <p class="text-xs text-gray-400 mb-4">Se marcan solos al registrar un movimiento de la misma subcategoría en el mes.</p>
+                <div id="contenedor_fijos" class="divide-y divide-gray-100"></div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-xl font-semibold mb-6 text-gray-800">Progreso de Presupuestos</h3>
+                <div id="contenedor_presupuestos" class="space-y-6">
+                    <!-- Llenado vía JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Deudas pendientes por persona (no depende del mes elegido) -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-semibold text-gray-800">Me deben / Debo</h3>
+                <a href="deudas.html" class="text-sm font-bold text-purple-600 hover:text-purple-800">Ver todas las deudas →</a>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <a href="deudas.html?tipo=Me%20debe" class="block rounded-lg border border-green-200 bg-green-50 p-4 hover:shadow-sm transition">
+                    <p class="text-sm text-green-800">Me deben</p>
+                    <p class="text-2xl font-bold text-green-700" id="deu_me_deben">$0</p>
+                </a>
+                <a href="deudas.html?tipo=Le%20debo" class="block rounded-lg border border-red-200 bg-red-50 p-4 hover:shadow-sm transition">
+                    <p class="text-sm text-red-800">Debo</p>
+                    <p class="text-2xl font-bold text-red-600" id="deu_debo">$0</p>
+                </a>
+            </div>
+            <div id="contenedor_personas" class="divide-y divide-gray-100"></div>
+        </div>
+
+        <!-- Patrimonio actual (no depende del mes elegido) -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <h3 class="text-xl font-semibold mb-4 text-gray-800">Patrimonio Hoy</h3>
+            <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 text-sm">
+                <div><p class="text-gray-500">Dinero en cuentas</p><p class="text-lg font-bold text-gray-800" id="pat_cuentas">$0</p></div>
+                <div><p class="text-gray-500">Deuda tarjetas</p><p class="text-lg font-bold text-red-600" id="pat_tarjetas">$0</p></div>
+                <div><p class="text-gray-500">Me deben</p><p class="text-lg font-bold text-green-700" id="pat_me_deben">$0</p></div>
+                <div><p class="text-gray-500">Debo</p><p class="text-lg font-bold text-red-600" id="pat_debo">$0</p></div>
+                <div class="col-span-2 lg:col-span-1"><p class="text-gray-500">Patrimonio neto</p><p class="text-2xl font-bold" id="pat_neto">$0</p></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('dashboard');</script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>

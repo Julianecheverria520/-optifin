@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiFin - Movimientos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Inter', sans-serif; background-color: #f8fafc; } </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <!-- Menú Lateral -->
+    <aside id="sidebar-container" class="h-full z-10"></aside>
+
+    <main class="flex-1 flex flex-col h-full overflow-y-auto">
+        <!-- Header -->
+        <header class="bg-white/50 backdrop-blur-sm sticky top-0 z-0 p-8 pb-4 flex justify-between items-end">
+            <div>
+                <h2 class="text-3xl font-bold text-gray-900">Movimientos</h2>
+                <p class="text-gray-500 text-sm mt-1">Registra tus gastos e ingresos de forma rápida y sencilla.</p>
+            </div>
+            <div class="bg-white border border-gray-200 text-gray-600 px-4 py-2 rounded-lg shadow-sm flex items-center gap-2 text-sm font-medium">
+                <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                <span id="fecha-header">Hoy</span>
+            </div>
+        </header>
+
+        <div class="p-8 pt-4 flex-1">
+            <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
+                
+                <!-- Columna Izquierda: Formulario -->
+                <div class="xl:col-span-7 bg-white p-8 rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] border border-gray-100">
+                    <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                        <span class="text-gray-400">←</span> Nuevo Movimiento
+                    </h3>
+                    
+                    <form id="transaccionForm" class="space-y-6">
+                        <!-- Botones Toggle (Gasto / Ingreso / Traslado) -->
+                        <div class="flex space-x-3 mb-2">
+                            <button type="button" id="btn-gasto" onclick="cambiarTipo('Gasto')" class="flex-1 py-2.5 px-4 rounded-xl flex items-center justify-center border text-sm font-bold transition-all duration-200 border-red-200 bg-red-50 text-red-600">
+                                <div class="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center mr-2 text-xs leading-none">-</div> Gasto
+                            </button>
+                            <button type="button" id="btn-ingreso" onclick="cambiarTipo('Ingreso')" class="flex-1 py-2.5 px-4 rounded-xl flex items-center justify-center border text-sm font-bold transition-all duration-200 border-transparent text-gray-500 hover:bg-gray-50">
+                                <div class="w-5 h-5 rounded-full bg-green-500 text-white flex items-center justify-center mr-2 text-xs leading-none">+</div> Ingreso
+                            </button>
+                            <button type="button" id="btn-traslado" onclick="cambiarTipo('Traslado')" class="flex-1 py-2.5 px-4 rounded-xl flex items-center justify-center border text-sm font-bold transition-all duration-200 border-transparent text-gray-500 hover:bg-gray-50">
+                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg> Traslado
+                            </button>
+                        </div>
+                        <input type="hidden" id="tipo" value="Gasto">
+
+                        <!-- ¿Quién pagó? (solo en Gasto) -->
+                        <div id="box_quien_pago">
+                            <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">¿Quién pagó?</label>
+                            <div class="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50 text-sm font-bold">
+                                <button type="button" id="btn_pague_yo" class="px-3 py-1 rounded-md">Lo pagué yo</button>
+                                <button type="button" id="btn_pago_otro" class="px-3 py-1 rounded-md">Lo pagó otra persona</button>
+                            </div>
+                            <div id="box_pagado_por" class="hidden mt-3">
+                                <input type="text" id="pagado_por" list="sugerencias_personas" placeholder="¿Quién lo pagó? (Ej: Sandy)" class="block w-full px-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-400 mt-1">Escribe en Monto solo <b>tu parte</b>. No sale de tus cuentas: queda como deuda "Le debo" con esa persona y cuenta como gasto tuyo.</p>
+                            </div>
+                        </div>
+
+                        <!-- Monto Grande -->
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1" id="lbl_monto">Monto</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-500 font-medium text-xl">$</span>
+                                <input type="number" id="monto" required min="1" step="any" class="block w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-2xl font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow">
+                            </div>
+                        </div>
+
+                        <!-- Cuentas (Origen y Destino) -->
+                        <div id="box_origen">
+                            <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1" id="lbl_origen">Cuenta</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path></svg></span>
+                                <select id="id_cuenta_origen" class="block w-full pl-11 pr-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none"></select>
+                            </div>
+                        </div>
+
+                        <div id="box_destino" class="hidden">
+                            <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Cuenta Destino</label>
+                            <div class="relative">
+                                <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg></span>
+                                <select id="id_cuenta_destino" class="block w-full pl-11 pr-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none"></select>
+                            </div>
+                        </div>
+
+                        <!-- Categoria y Concepto (Dropdowns ocultos o sincronizados con la grilla visual) -->
+                        <div id="box_categoria_sub" class="space-y-6">
+                            <input type="hidden" id="id_categoria">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Concepto Específico (Subcategoría)</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg></span>
+                                    <select id="id_subcategoria" required class="block w-full pl-11 pr-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 bg-white focus:ring-2 focus:ring-blue-500 appearance-none"></select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Nota y Fecha -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Nota (Opcional)</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></span>
+                                    <input type="text" id="descripcion" placeholder="Ej: Pago arriendo" class="block w-full pl-11 pr-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:ring-2 focus:ring-blue-500">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Fecha</label>
+                                <div class="relative">
+                                    <input type="date" id="fecha" required class="block w-full px-4 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:ring-2 focus:ring-blue-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Gasto compartido: solo visible en Gasto -->
+                        <div id="box_compartido" class="rounded-xl border border-gray-200 p-4">
+                            <label class="flex items-center gap-3 cursor-pointer select-none">
+                                <input type="checkbox" id="chk_compartido" class="w-4 h-4 accent-blue-600">
+                                <span class="text-sm font-semibold text-gray-700">Gasto compartido</span>
+                                <span class="text-xs text-gray-400">Pagaste todo, pero otras personas te deben su parte</span>
+                            </label>
+
+                            <div id="panel_compartido" class="hidden mt-4 space-y-3">
+                                <div id="lista_participantes" class="space-y-2"></div>
+                                <datalist id="sugerencias_personas"></datalist>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" id="btn_agregar_participante" class="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg">+ Agregar persona</button>
+                                    <button type="button" id="btn_dividir" class="text-xs font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg">Dividir en partes iguales (incluyéndome)</button>
+                                </div>
+                                <div class="text-sm bg-gray-50 rounded-lg p-3 flex justify-between">
+                                    <span class="text-gray-500">Te deben: <span id="resumen_te_deben" class="font-bold text-green-700">$0</span></span>
+                                    <span class="text-gray-500">Tu parte (gasto real): <span id="resumen_tu_parte" class="font-bold text-gray-800">$0</span></span>
+                                </div>
+                                <p class="text-xs text-gray-400">Cada persona quedará en Deudas como "Me debe". Si el nombre coincide con un usuario de OptiFin, se enlaza a su cuenta.</p>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-600/30 transition-all duration-200 flex justify-center items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                            Registrar Movimiento
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Columna Derecha: Cuadrícula de Categorías (Visual) -->
+                <div class="xl:col-span-5 bg-white p-8 rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] border border-gray-100 h-fit" id="panel_categorias">
+                    <h3 class="text-sm font-bold text-gray-800 mb-1">Categorías</h3>
+                    <p class="text-xs text-gray-400 mb-6">Selecciona una categoría para tu movimiento.</p>
+                    <div id="grid-categorias" class="grid grid-cols-3 gap-3">
+                        <!-- Las categorías se inyectan acá por JS -->
+                    </div>
+                </div>
+                
+            </div>
+
+            <!-- Tabla abajo -->
+            <div class="mt-8 bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+                <h3 class="text-lg font-bold text-gray-800 mb-4">Últimos Movimientos</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full table-auto">
+                        <thead>
+                            <tr class="bg-gray-50 text-gray-500 uppercase text-xs tracking-wider">
+                                <th class="py-3 px-4 text-left rounded-l-lg">Fecha</th>
+                                <th class="py-3 px-4 text-left">Tipo</th>
+                                <th class="py-3 px-4 text-left">Categoría/Concepto</th>
+                                <th class="py-3 px-4 text-right">Monto</th>
+                                <th class="py-3 px-4 text-left">Descripción</th>
+                                <th class="py-3 px-4 text-right rounded-r-lg"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tablaResultados" class="text-gray-700 text-sm font-medium"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('transacciones');</script>
+    <script src="js/transacciones.js"></script>
+</body>
+</html>

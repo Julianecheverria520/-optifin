@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiFin - Categorías</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen">
+
+    <aside id="sidebar-container" class="w-64 bg-blue-900 text-white flex flex-col h-full shadow-lg"></aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+        <h2 class="text-3xl font-bold text-gray-800 mb-6">Gestión de Estructura</h2>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div class="space-y-8">
+                <div class="bg-white p-6 rounded-lg shadow-md border-t-4 border-blue-500">
+                    <h3 class="text-xl font-semibold mb-4 text-blue-700">1. Nueva Categoría Principal</h3>
+                    <form id="catForm" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Nombre (Ej: Educación, Mascota)</label>
+                            <input type="text" id="nombre_cat" required class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Tipo</label>
+                            <select id="tipo_cat" class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                                <option value="Gasto">Gasto</option>
+                                <option value="Ingreso">Ingreso</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700">Crear Categoría</button>
+                    </form>
+                </div>
+
+                <div class="bg-white p-6 rounded-lg shadow-md border-t-4 border-teal-500">
+                    <h3 class="text-xl font-semibold mb-4 text-teal-700">2. Nueva Subcategoría</h3>
+                    <form id="subForm" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">¿A qué categoría pertenece?</label>
+                            <select id="id_categoria_padre" class="mt-1 block w-full border-gray-300 rounded-md p-2 border"></select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Nombre (Ej: Universidad, Comida Perro)</label>
+                            <input type="text" id="nombre_sub" required class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                        </div>
+                        <button type="submit" class="w-full bg-teal-600 text-white font-bold py-2 px-4 rounded hover:bg-teal-700">Añadir Subcategoría</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-md h-fit">
+                <h3 class="text-xl font-semibold mb-4">Estructura Actual</h3>
+                <div id="listaCategorias" class="space-y-4"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('categorias');</script>
+    <script src="js/categorias.js"></script>
+</body>
+</html>

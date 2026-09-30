@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiFin - Configuración y Cuentas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen">
+
+    <aside id="sidebar-container" class="w-64 bg-blue-900 text-white flex flex-col h-full shadow-lg"></aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+        <h2 class="text-3xl font-bold text-gray-800 mb-6">Mis Cuentas y Saldos</h2>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="bg-white p-6 rounded-lg shadow-md border-t-4 border-gray-800 lg:col-span-1 h-fit">
+                <h3 id="titulo_form_cuenta" class="text-xl font-semibold mb-4 text-gray-800">Añadir Cuenta</h3>
+                <form id="cuentaForm" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Nombre (Ej: Nequi, Bogotá)</label>
+                        <input type="text" id="nombre_cuenta" required class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Tipo</label>
+                        <select id="tipo_cuenta" class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                            <option value="Débito">Cuenta de Ahorros / Débito</option>
+                            <option value="Billetera Digital">Billetera Digital (Nequi/Daviplata)</option>
+                            <option value="Efectivo">Efectivo (Bolsillo)</option>
+                            <option value="Crédito">Tarjeta de Crédito</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Saldo Inicial ($)</label>
+                        <input type="number" id="saldo_inicial" required step="any" class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                        <p class="text-xs text-gray-400 mt-1">Para tarjetas de crédito, escribe la deuda actual en negativo.</p>
+                    </div>
+                    <button type="submit" id="btn_guardar_cuenta" class="w-full bg-gray-800 text-white font-bold py-2 px-4 rounded hover:bg-black">Crear Cuenta</button>
+                    <button type="button" id="btn_cancelar_cuenta" class="hidden w-full bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded hover:bg-gray-300">Cancelar edición</button>
+                </form>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow-md lg:col-span-2">
+                <h3 class="text-xl font-semibold mb-4">Saldos Actuales</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full table-auto text-sm">
+                        <thead>
+                            <tr class="bg-gray-100 text-gray-600 uppercase leading-normal">
+                                <th class="py-3 px-6 text-left">Cuenta</th>
+                                <th class="py-3 px-6 text-left">Tipo</th>
+                                <th class="py-3 px-6 text-right">Saldo Actual</th>
+                                <th class="py-3 px-6 text-right">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tablaCuentas" class="text-gray-700 font-medium"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('configuracion');</script>
+    <script src="js/cuentas.js"></script>
+</body>
+</html>

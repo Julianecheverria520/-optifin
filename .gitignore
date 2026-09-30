@@ -1,0 +1,14 @@
+# Secretos: nunca subir a git
+.env
+.optifin_secret
+
+# Datos locales y respaldos
+*.backup*.xlsx
+~$*.xlsx
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/

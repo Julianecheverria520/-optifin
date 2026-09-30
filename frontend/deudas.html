@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OptiFin - Deudas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen">
+
+    <aside id="sidebar-container" class="w-64 bg-blue-900 text-white flex flex-col h-full shadow-lg"></aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+        <h2 class="text-3xl font-bold text-gray-800 mb-6">Radar de Deudas</h2>
+
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8 border-l-4 border-purple-500">
+            <h3 class="text-xl font-semibold mb-4 text-purple-700">Registrar Deuda</h3>
+            <form id="deudasForm" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Persona o Entidad</label>
+                    <input type="text" id="persona_deuda" placeholder="Ej: Juan, Banco..." required class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Tipo de Deuda</label>
+                    <select id="tipo_deuda" class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                        <option value="Me debe">Me debe plata (yo presté)</option>
+                        <option value="Le debo">Le debo plata (me prestaron)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Monto ($)</label>
+                    <input type="number" id="monto_deuda" required min="1" step="any" class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Fecha de Creación</label>
+                    <input type="date" id="fecha_deuda" required class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700">Cuenta afectada</label>
+                    <select id="cuenta_deuda" class="mt-1 block w-full border-gray-300 rounded-md p-2 border"></select>
+                    <p class="text-xs text-gray-400 mt-1">Si prestaste, el dinero sale de esta cuenta; si te prestaron, entra. Elige "Ninguna" para una deuda que ya existía.</p>
+                </div>
+                <div class="md:col-span-2">
+                    <button type="submit" class="w-full bg-purple-600 text-white font-bold py-2 px-4 rounded hover:bg-purple-700">Registrar en Radar</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Panel de abono: se muestra al pulsar "Abonar" en una deuda -->
+        <div id="panelAbono" class="hidden bg-white p-6 rounded-lg shadow-md mb-8 border-l-4 border-green-500">
+            <h3 class="text-xl font-semibold mb-1 text-green-700">Registrar Abono</h3>
+            <p class="text-sm text-gray-500 mb-4" id="abono_info"></p>
+            <form id="abonoForm" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Monto ($)</label>
+                    <input type="number" id="monto_abono" required min="1" step="any" class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Fecha</label>
+                    <input type="date" id="fecha_abono" required class="mt-1 block w-full border-gray-300 rounded-md p-2 border">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700" id="lbl_cuenta_abono">Cuenta</label>
+                    <select id="cuenta_abono" class="mt-1 block w-full border-gray-300 rounded-md p-2 border"></select>
+                </div>
+                <div class="md:col-span-3 flex gap-3">
+                    <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 px-4 rounded hover:bg-green-700">Registrar Abono</button>
+                    <button type="button" id="btn_cancelar_abono" class="bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded hover:bg-gray-300">Cancelar</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Cruce de cuentas: compensar lo que una persona me debe con lo que le debo -->
+        <div id="seccion_cruce" class="bg-white p-6 rounded-lg shadow-md mb-8 border-l-4 border-indigo-500">
+            <h3 class="text-xl font-semibold mb-1 text-indigo-700">Cruce de Cuentas</h3>
+            <p class="text-sm text-gray-500 mb-4">Compensa lo que una persona te debe con lo que tú le debes y deja un solo saldo. Si la persona es usuaria de OptiFin, el cruce queda pendiente hasta que lo apruebe.</p>
+            <div class="mb-4">
+                <label class="block text-xs font-medium text-gray-500">Persona</label>
+                <select id="cruce_persona" class="mt-1 border-gray-300 rounded-md p-2 border text-sm min-w-[14rem]"></select>
+            </div>
+            <div id="cruce_vista_previa"></div>
+            <h4 class="text-sm font-bold uppercase text-gray-500 mt-6 mb-2">Historial de cruces</h4>
+            <div id="lista_liquidaciones" class="divide-y divide-gray-100"></div>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <h3 class="text-xl font-semibold mb-4">Radar Activo</h3>
+
+            <!-- Filtros (también se pueden abrir desde el Resumen con ?persona=... o ?tipo=...) -->
+            <div class="flex flex-wrap items-end gap-3 mb-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500">Persona</label>
+                    <select id="filtro_persona" class="mt-1 border-gray-300 rounded-md p-2 border text-sm"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500">Tipo</label>
+                    <select id="filtro_tipo" class="mt-1 border-gray-300 rounded-md p-2 border text-sm">
+                        <option value="">Todas</option>
+                        <option value="Me debe">Me deben</option>
+                        <option value="Le debo">Debo</option>
+                    </select>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-gray-600 pb-2 cursor-pointer select-none">
+                    <input type="checkbox" id="filtro_pagadas" class="w-4 h-4 accent-purple-600"> Mostrar pagadas
+                </label>
+                <button type="button" id="btn_limpiar_filtros" class="text-sm text-purple-600 hover:text-purple-800 pb-2">Limpiar filtros</button>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+                <div class="rounded-lg bg-green-50 border border-green-200 p-3">
+                    <span class="text-green-800">Te deben (pendiente):</span> <span class="font-bold text-green-700" id="total_me_deben">$0</span>
+                </div>
+                <div class="rounded-lg bg-red-50 border border-red-200 p-3">
+                    <span class="text-red-800">Debes (pendiente):</span> <span class="font-bold text-red-600" id="total_debo">$0</span>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead>
+                        <tr class="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
+                            <th class="py-3 px-6 text-left">Persona</th>
+                            <th class="py-3 px-6 text-left">Tipo</th>
+                            <th class="py-3 px-6 text-left">Monto</th>
+                            <th class="py-3 px-6 text-left">Abonado</th>
+                            <th class="py-3 px-6 text-left">Saldo</th>
+                            <th class="py-3 px-6 text-left">Fecha</th>
+                            <th class="py-3 px-6 text-left">Estado</th>
+                            <th class="py-3 px-6 text-left">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tablaDeudas" class="text-gray-600 text-sm font-light"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h3 class="text-xl font-semibold mb-4">Historial de Abonos</h3>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto">
+                    <thead>
+                        <tr class="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
+                            <th class="py-3 px-6 text-left">Fecha</th>
+                            <th class="py-3 px-6 text-left">Persona</th>
+                            <th class="py-3 px-6 text-left">Monto</th>
+                            <th class="py-3 px-6 text-left">Cuenta</th>
+                            <th class="py-3 px-6 text-left">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tablaAbonos" class="text-gray-600 text-sm font-light"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('deudas');</script>
+    <script src="js/deudas.js"></script>
+</body>
+</html>
