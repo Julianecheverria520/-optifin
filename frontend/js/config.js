@@ -49,6 +49,8 @@ async function api(ruta, opciones = {}) {
     try {
         res = await fetch(API_URL + ruta, config);
     } catch (err) {
+        throw new Error("No hay conexión con el servidor. ¿Está corriendo el backend?");
+    }
 
     const data = await res.json().catch(() => null);
     // Sesión vencida o inválida: volver al login (en el login, el 401 es "contraseña incorrecta")
