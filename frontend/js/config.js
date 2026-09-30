@@ -1,5 +1,5 @@
 // Configuración compartida por todas las páginas. 
-const API_URL = "";
+const API_URL = "https://optifin-bhok.onrender.com";
 
 // --- SISTEMA DE SESIÓN ---
 let USUARIO_ACTUAL = null;
