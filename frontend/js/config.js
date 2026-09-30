@@ -12,8 +12,15 @@ function leerSesion() {
         try {
             const texto = almacen().getItem('optifin_user');
             if (!texto) continue;
-            const usuario = JSON.parse(texto);
+            let usuario = JSON.parse(texto);
+            
+            // Adaptar los nombres de columnas de Supabase a lo que espera el Frontend
+            if (usuario.ID_Usuario && !usuario.id) usuario.id = usuario.ID_Usuario;
+            if (usuario.Nombre && !usuario.nombre) usuario.nombre = usuario.Nombre;
+            if (usuario.Email && !usuario.email) usuario.email = usuario.Email;
+
             if (usuario && usuario.id && usuario.nombre && usuario.token) return usuario;
+            
             almacen().removeItem('optifin_user'); // dato inválido
         } catch (e) { /* almacenamiento bloqueado o JSON dañado */ }
     }
