@@ -63,7 +63,7 @@ def deudas_con_saldo(id_usuario: str) -> list[dict]:
     
     abonado = defaultdict(float)
     if ids_deudas:
-        res = supabase.table("abonos_deuda").select("*").in_("id_deuda", ids_deudas).execute()
+        res = supabase.table("abonos").select("*").in_("id_deuda", ids_deudas).execute()
         for a in (res.data or []):
             id_d = _int(a.get("id_deuda") or a.get("id"))
             if id_d: abonado[id_d] += _monto(a)
@@ -114,7 +114,7 @@ def saldos_cuentas(id_usuario: str) -> list[dict]:
         if d.get("id_cuenta"):
             movimiento[_int(d["id_cuenta"])] += -_monto(d) if d.get("tipo_deuda") == "Me debe" else _monto(d)
 
-    for a in _fetch("abonos_deuda", id_usuario):
+    for a in _fetch("abonos", id_usuario):
         if a.get("id_cuenta"):
             id_d = _int(a.get("id_deuda") or a.get("id"))
             movimiento[_int(a["id_cuenta"])] += _monto(a) if tipo_deuda.get(id_d) == "Me debe" else -_monto(a)
