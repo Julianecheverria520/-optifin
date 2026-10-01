@@ -1,168 +1,145 @@
-"""Cálculos financieros por usuario: saldos de cuentas, estado de deudas y resumen mensual.
-
-Trabaja sobre listas de dicts (db.a_registros), así que no depende de cómo se guarden
-los datos: al migrar a Supabase solo cambia la lectura.
-
-Cada función recibe el ID del usuario y solo usa sus datos, más las deudas que otro usuario de
-OptiFin registró con él (vistas desde su lado) y su parte de los gastos que otros compartieron con él.
-"""
+"""Cálculos financieros por usuario conectados directamente a Supabase."""
 import calendar
 from collections import defaultdict
 from datetime import date
 
-from backend import excel_store as db
+from backend.database import supabase
 
 TIPO_PRESUPUESTO = "Gasto Variable (Presupuesto)"
 
-
-def _registros(hoja: str, id_usuario: int | None = None) -> list[dict]:
-    """Filas de una hoja; si se indica usuario, solo las suyas."""
-    df = db.leer_hoja(hoja)
-    return db.a_registros(db.solo_usuario(df, id_usuario) if id_usuario is not None else df)
-
+def _fetch(table: str, id_usuario: str | None = None) -> list[dict]:
+    """Obtiene registros de Supabase. Si se pasa id_usuario, filtra por él."""
+    query = supabase.table(table).select("*")
+    if id_usuario is not None:
+        query = query.eq("id_usuario", id_usuario)
+    res = query.execute()
+    return res.data
 
 def nombres_usuarios() -> dict:
-    return {u["ID_Usuario"]: u["Nombre"] for u in _registros("Usuarios")}
-
+    # Retornamos vacío por ahora para evitar consultar la tabla protegida auth.users públicamente
+    return {}
 
 def _fecha(valor):
+    if not valor: return None
     try:
         return date.fromisoformat(str(valor)[:10])
     except (TypeError, ValueError):
         return None
 
-
 def _monto(registro) -> float:
-    return float(registro.get("Monto") or 0)
-
+    return float(registro.get("monto") or 0)
 
 # ---------- Deudas ----------
 
-def compartido_por_transaccion(id_usuario: int) -> dict:
-    """{ID_Transaccion: total que otros deben de ese gasto compartido} (transacciones del usuario).
-    Solo cuentan las deudas "Me debe"; las "Le debo" ligadas son gastos que pagó otra persona."""
+def compartido_por_transaccion(id_usuario: str) -> dict:
     total = defaultdict(float)
-    for d in _registros("Deudas", id_usuario):
-        if d.get("ID_Transaccion") and d["Tipo_Deuda"] == "Me debe":
-            total[d["ID_Transaccion"]] += _monto(d)
+    for d in _fetch("deudas", id_usuario):
+        if d.get("id_transaccion") and d["tipo_deuda"] == "Me debe":
+            total[d["id_transaccion"]] += _monto(d)
     return dict(total)
 
+def pagado_por_transaccion(id_usuario: str) -> dict:
+    return {d["id_transaccion"]: d["persona"]
+            for d in _fetch("deudas", id_usuario)
+            if d.get("id_transaccion") and d["tipo_deuda"] == "Le debo"}
 
-def pagado_por_transaccion(id_usuario: int) -> dict:
-    """{ID_Transaccion: persona que pagó ese gasto por mí}."""
-    return {d["ID_Transaccion"]: d["Persona"]
-            for d in _registros("Deudas", id_usuario)
-            if d.get("ID_Transaccion") and d["Tipo_Deuda"] == "Le debo"}
-
-
-def deudas_visibles(id_usuario: int) -> list[dict]:
-    """Deudas del usuario más las que otro usuario de OptiFin registró con él, vistas desde su lado:
-    si Julián registró "Sandy me debe", Sandy ve "Le debo a Julián" (Es_Propia = False, solo lectura)."""
+def deudas_visibles(id_usuario: str) -> list[dict]:
+    res = supabase.table("deudas").select("*").or_(f"id_usuario.eq.{id_usuario},id_usuario_contraparte.eq.{id_usuario}").execute()
     nombres = nombres_usuarios()
     visibles = []
-    for d in _registros("Deudas"):
-        if d["ID_Usuario"] == id_usuario:
-            visibles.append({**d, "Es_Propia": True})
-        elif d.get("ID_Usuario_Contraparte") == id_usuario:
+    for d in res.data:
+        if d["id_usuario"] == id_usuario:
+            visibles.append({**d, "es_propia": True})
+        elif d.get("id_usuario_contraparte") == id_usuario:
             visibles.append({
                 **d,
-                "Es_Propia": False,
-                "Tipo_Deuda": "Le debo" if d["Tipo_Deuda"] == "Me debe" else "Me debe",
-                "Persona": nombres.get(d["ID_Usuario"], "Otro usuario"),
-                "ID_Usuario_Contraparte": d["ID_Usuario"],
-                "ID_Cuenta": None,  # la cuenta es del otro usuario
+                "es_propia": False,
+                "tipo_deuda": "Le debo" if d["tipo_deuda"] == "Me debe" else "Me debe",
+                "persona": nombres.get(d["id_usuario"], "Usuario Compartido"),
+                "id_usuario_contraparte": d["id_usuario"],
+                "id_cuenta": None,
             })
     return visibles
 
-
-def deudas_con_saldo(id_usuario: int) -> list[dict]:
-    """Cada deuda visible con lo abonado, el saldo pendiente y el estado calculado."""
+def deudas_con_saldo(id_usuario: str) -> list[dict]:
+    visibles = deudas_visibles(id_usuario)
+    ids_deudas = [d["id_deuda"] for d in visibles if d.get("id_deuda")]
+    
     abonado = defaultdict(float)
-    for a in _registros("Abonos_Deuda"):
-        abonado[a["ID_Deuda"]] += _monto(a)
+    if ids_deudas:
+        res = supabase.table("abonos_deuda").select("*").in_("id_deuda", ids_deudas).execute()
+        for a in res.data:
+            abonado[a["id_deuda"]] += _monto(a)
 
     resultado = []
-    for d in deudas_visibles(id_usuario):
-        pagado = abonado[d["ID_Deuda"]]
+    for d in visibles:
+        pagado = abonado[d["id_deuda"]]
         saldo = max(_monto(d) - pagado, 0)
-        d["Abonado"] = pagado
-        d["Saldo_Pendiente"] = saldo
-        d["Estado"] = "Pagada" if saldo <= 0 else ("Parcial" if pagado > 0 else "Pendiente")
+        d["abonado"] = pagado
+        d["saldo_pendiente"] = saldo
+        d["estado"] = "Pagada" if saldo <= 0 else ("Parcial" if pagado > 0 else "Pendiente")
         resultado.append(d)
     return resultado
 
-
-def deudas_por_persona(id_usuario: int) -> list[dict]:
-    """Saldo pendiente agrupado por persona: cuánto me debe, cuánto le debo y el neto.
-    Solo incluye personas con algo pendiente; primero las de mayor monto neto."""
+def deudas_por_persona(id_usuario: str) -> list[dict]:
     grupos = {}
     for d in deudas_con_saldo(id_usuario):
-        if d["Saldo_Pendiente"] <= 0:
+        if d["saldo_pendiente"] <= 0:
             continue
-        clave = str(d["Persona"]).strip().casefold()
-        g = grupos.setdefault(clave, {"persona": str(d["Persona"]).strip(), "es_usuario": False,
+        clave = str(d["persona"]).strip().casefold()
+        g = grupos.setdefault(clave, {"persona": str(d["persona"]).strip(), "es_usuario": False,
                                       "me_debe": 0.0, "le_debo": 0.0, "deudas": 0})
-        g["es_usuario"] = g["es_usuario"] or bool(d.get("ID_Usuario_Contraparte"))
-        g["me_debe" if d["Tipo_Deuda"] == "Me debe" else "le_debo"] += d["Saldo_Pendiente"]
+        g["es_usuario"] = g["es_usuario"] or bool(d.get("id_usuario_contraparte"))
+        g["me_debe" if d["tipo_deuda"] == "Me debe" else "le_debo"] += d["saldo_pendiente"]
         g["deudas"] += 1
 
     for g in grupos.values():
-        g["neto"] = g["me_debe"] - g["le_debo"]  # positivo = me debe; negativo = le debo
+        g["neto"] = g["me_debe"] - g["le_debo"]
     return sorted(grupos.values(), key=lambda g: abs(g["neto"]), reverse=True)
-
 
 # ---------- Cuentas ----------
 
-def saldos_cuentas(id_usuario: int) -> list[dict]:
-    """Saldo actual = saldo inicial + ingresos - gastos ± traslados ± préstamos y abonos de deudas."""
+def saldos_cuentas(id_usuario: str) -> list[dict]:
     movimiento = defaultdict(float)
 
-    for t in _registros("Transacciones", id_usuario):
+    for t in _fetch("transacciones", id_usuario):
         m = _monto(t)
-        if t["Tipo_Movimiento"] == "Ingreso":
-            movimiento[t["ID_Cuenta_Destino"]] += m
-        elif t["Tipo_Movimiento"] == "Gasto":
-            movimiento[t["ID_Cuenta_Origen"]] -= m
-        elif t["Tipo_Movimiento"] == "Traslado":
-            movimiento[t["ID_Cuenta_Origen"]] -= m
-            movimiento[t["ID_Cuenta_Destino"]] += m
+        if t["tipo_movimiento"] == "Ingreso" and t.get("id_cuenta_destino"):
+            movimiento[t["id_cuenta_destino"]] += m
+        elif t["tipo_movimiento"] == "Gasto" and t.get("id_cuenta_origen"):
+            movimiento[t["id_cuenta_origen"]] -= m
+        elif t["tipo_movimiento"] == "Traslado":
+            if t.get("id_cuenta_origen"): movimiento[t["id_cuenta_origen"]] -= m
+            if t.get("id_cuenta_destino"): movimiento[t["id_cuenta_destino"]] += m
 
-    # Al crear una deuda con cuenta: si presté ("Me debe") sale dinero; si me prestaron ("Le debo") entra
-    deudas = _registros("Deudas", id_usuario)
-    tipo_deuda = {d["ID_Deuda"]: d["Tipo_Deuda"] for d in deudas}
+    deudas = _fetch("deudas", id_usuario)
+    tipo_deuda = {d["id_deuda"]: d["tipo_deuda"] for d in deudas}
     for d in deudas:
-        if d.get("ID_Cuenta"):
-            movimiento[d["ID_Cuenta"]] += -_monto(d) if d["Tipo_Deuda"] == "Me debe" else _monto(d)
+        if d.get("id_cuenta"):
+            movimiento[d["id_cuenta"]] += -_monto(d) if d["tipo_deuda"] == "Me debe" else _monto(d)
 
-    # Abonos con cuenta: si me pagan entra dinero; si yo pago sale
-    for a in _registros("Abonos_Deuda", id_usuario):
-        if a.get("ID_Cuenta"):
-            tipo = tipo_deuda.get(a["ID_Deuda"])
-            movimiento[a["ID_Cuenta"]] += _monto(a) if tipo == "Me debe" else -_monto(a)
+    for a in _fetch("abonos_deuda", id_usuario):
+        if a.get("id_cuenta"):
+            tipo = tipo_deuda.get(a["id_deuda"])
+            movimiento[a["id_cuenta"]] += _monto(a) if tipo == "Me debe" else -_monto(a)
 
     resultado = []
-    for c in _registros("Cuentas", id_usuario):
-        if c["ID_Cuenta"] is None:
+    for c in _fetch("cuentas", id_usuario):
+        if c.get("id_cuenta") is None:
             continue
-        inicial = float(c["Saldo_Inicial"] or 0)
+        inicial = float(c.get("saldo_inicial") or 0)
         resultado.append({
-            "id_cuenta": int(c["ID_Cuenta"]),
-            "nombre": str(c["Nombre_Cuenta"]),
-            "tipo": str(c["Tipo_Cuenta"]),
+            "id_cuenta": int(c["id_cuenta"]),
+            "nombre": str(c["nombre_cuenta"]),
+            "tipo": str(c["tipo_cuenta"]),
             "saldo_inicial": inicial,
-            "saldo_actual": inicial + movimiento[c["ID_Cuenta"]],
+            "saldo_actual": inicial + movimiento[c["id_cuenta"]],
         })
     return resultado
-
 
 # ---------- Resumen mensual ----------
 
 def _asignar_pagos(pagos: list[float], montos_fijos: list[float]) -> tuple[list[float], float]:
-    """Reparte los pagos de una subcategoría entre sus fijos (ordenados por día).
-    1) Un pago igual al monto de un fijo aún sin cubrir se asigna a ese fijo
-       (p. ej. Disney 25.900 y Netflix 29.900 en "Suscripciones", pagados en cualquier orden).
-    2) El resto se reparte en orden de día (p. ej. dos quincenas de salario).
-    Devuelve lo cubierto de cada fijo y lo que sobró (pagado de más)."""
     cubierto = [0.0] * len(montos_fijos)
     restantes = []
     for pago in pagos:
@@ -179,7 +156,6 @@ def _asignar_pagos(pagos: list[float], montos_fijos: list[float]) -> tuple[list[
         disponible -= aporte
     return cubierto, disponible
 
-
 def _estado_fijo(monto, cubierto, vencimiento: date, hoy: date) -> str:
     if cubierto >= monto:
         return "pagado"
@@ -187,146 +163,126 @@ def _estado_fijo(monto, cubierto, vencimiento: date, hoy: date) -> str:
         return "vencido"
     return "parcial" if cubierto > 0 else "pendiente"
 
-
 def vigente(p: dict, anio: int, mes: int) -> bool:
-    """¿El concepto de planificación aplica en ese mes? Sin fecha de inicio se considera siempre vigente."""
-    inicio, fin = _fecha(p.get("Fecha_Inicio")), _fecha(p.get("Fecha_Fin"))
+    inicio, fin = _fecha(p.get("fecha_inicio")), _fecha(p.get("fecha_fin"))
     if inicio and (anio, mes) < (inicio.year, inicio.month):
         return False
     if fin and (anio, mes) > (fin.year, fin.month):
         return False
     return True
 
-
-def gastos_compartidos_conmigo(id_usuario: int) -> list[dict]:
-    """Mi parte de los gastos que otro usuario de OptiFin pagó y compartió conmigo, como
-    movimientos de solo lectura (sin cuenta: yo no he pagado nada todavía; lo debo).
-    La subcategoría se busca por nombre entre las mías (todos parten de la misma plantilla).
-    El ID es negativo (-ID_Deuda) para no confundirlo con transacciones reales."""
+def gastos_compartidos_conmigo(id_usuario: str) -> list[dict]:
     nombres = nombres_usuarios()
-    subs_todas = {s["ID_Subcategoria"]: s["Nombre_Subcategoria"] for s in _registros("Subcategorias")}
-    mis_subs = {str(s["Nombre_Subcategoria"]).strip().casefold(): s["ID_Subcategoria"]
-                for s in _registros("Subcategorias", id_usuario)}
-    transacciones = {t["ID_Transaccion"]: t for t in _registros("Transacciones")}
-
+    mis_subs = {str(s["nombre_subcategoria"]).strip().casefold(): s["id_subcategoria"]
+                for s in _fetch("subcategorias", id_usuario)}
+    
     resultado = []
-    for d in _registros("Deudas"):
-        if (d.get("ID_Usuario_Contraparte") != id_usuario or d["ID_Usuario"] == id_usuario
-                or d["Tipo_Deuda"] != "Me debe" or not d.get("ID_Transaccion")):
+    deudas = _fetch("deudas") 
+    transacciones = {t["id_transaccion"]: t for t in _fetch("transacciones")}
+    subs_todas = {s["id_subcategoria"]: s["nombre_subcategoria"] for s in _fetch("subcategorias")}
+
+    for d in deudas:
+        if (d.get("id_usuario_contraparte") != id_usuario or d["id_usuario"] == id_usuario
+                or d["tipo_deuda"] != "Me debe" or not d.get("id_transaccion")):
             continue
-        t = transacciones.get(d["ID_Transaccion"])
+        t = transacciones.get(d["id_transaccion"])
         if not t:
             continue
-        nombre_sub = str(subs_todas.get(t["ID_Subcategoria"], "")).strip().casefold()
+        nombre_sub = str(subs_todas.get(t["id_subcategoria"], "")).strip().casefold()
         resultado.append({
-            "ID_Transaccion": -d["ID_Deuda"],
-            "ID_Usuario": id_usuario,
-            "Fecha": t["Fecha"],
-            "Tipo_Movimiento": "Gasto",
-            "ID_Subcategoria": mis_subs.get(nombre_sub),
-            "ID_Cuenta_Origen": None,
-            "ID_Cuenta_Destino": None,
-            "Monto": _monto(d),
-            "Descripcion": d.get("Descripcion") or t.get("Descripcion"),
-            "Compartido_Por": nombres.get(d["ID_Usuario"], "Otro usuario"),
-            "Solo_Lectura": True,
+            "id_transaccion": -d["id_deuda"],
+            "id_usuario": id_usuario,
+            "fecha": t["fecha"],
+            "tipo_movimiento": "Gasto",
+            "id_subcategoria": mis_subs.get(nombre_sub),
+            "id_cuenta_origen": None,
+            "id_cuenta_destino": None,
+            "monto": _monto(d),
+            "descripcion": d.get("descripcion") or t.get("descripcion"),
+            "compartido_por": nombres.get(d["id_usuario"], "Usuario Compartido"),
+            "solo_lectura": True,
         })
     return resultado
 
-
-def resumen_mes(mes: int, anio: int, id_usuario: int, hoy: date | None = None) -> dict:
+def resumen_mes(mes: int, anio: int, id_usuario: str, hoy: date | None = None) -> dict:
     hoy = hoy or date.today()
     ultimo_dia = calendar.monthrange(anio, mes)[1]
 
-    subcategorias = {s["ID_Subcategoria"]: s["Nombre_Subcategoria"] for s in _registros("Subcategorias", id_usuario)}
-    plan = [p for p in _registros("Presupuestos_y_Fijos", id_usuario)
-            if p.get("Activo") != "No" and vigente(p, anio, mes)]
+    subcategorias = {s["id_subcategoria"]: s["nombre_subcategoria"] for s in _fetch("subcategorias", id_usuario)}
+    plan = [p for p in _fetch("planificacion", id_usuario)
+            if p.get("activo") != "No" and vigente(p, anio, mes)]
 
-    # 1. Movimientos reales del mes (los míos + mi parte de gastos que otros usuarios compartieron conmigo)
-    del_mes = [t for t in _registros("Transacciones", id_usuario) + gastos_compartidos_conmigo(id_usuario)
-               if (f := _fecha(t["Fecha"])) and f.month == mes and f.year == anio]
-    # En un gasto compartido, lo que otros deben no es gasto propio sino un préstamo
+    del_mes = [t for t in _fetch("transacciones", id_usuario) + gastos_compartidos_conmigo(id_usuario)
+               if (f := _fecha(t.get("fecha"))) and f.month == mes and f.year == anio]
     compartido = compartido_por_transaccion(id_usuario)
 
     def propio(t):
-        return _monto(t) - compartido.get(t["ID_Transaccion"], 0.0)
+        return _monto(t) - compartido.get(t.get("id_transaccion"), 0.0)
 
-    ingresos = sum(_monto(t) for t in del_mes if t["Tipo_Movimiento"] == "Ingreso")
-    gastos = sum(propio(t) for t in del_mes if t["Tipo_Movimiento"] == "Gasto")
-    pagado_por_otros = sum(compartido.get(t["ID_Transaccion"], 0.0) for t in del_mes if t["Tipo_Movimiento"] == "Gasto")
+    ingresos = sum(_monto(t) for t in del_mes if t["tipo_movimiento"] == "Ingreso")
+    gastos = sum(propio(t) for t in del_mes if t["tipo_movimiento"] == "Gasto")
+    pagado_por_otros = sum(compartido.get(t.get("id_transaccion"), 0.0) for t in del_mes if t["tipo_movimiento"] == "Gasto")
 
-    # Movimientos propios por (tipo, id_subcategoria): en gastos compartidos solo mi parte;
-    # los gastos que pagó otra persona por mí ya se registran por mi parte
-    montos_por_clave = defaultdict(list)       # montos en orden de fecha (para asignar a los fijos)
-    propio_por_sub = defaultdict(float)        # total del mes
-    propio_por_quincena = defaultdict(float)   # (tipo, sub, quincena 1|2) -> total
-    for t in sorted(del_mes, key=lambda t: (str(t["Fecha"]), t["ID_Transaccion"])):
-        if t["Tipo_Movimiento"] in ("Ingreso", "Gasto"):
-            clave = (t["Tipo_Movimiento"], t["ID_Subcategoria"])
-            m = propio(t) if t["Tipo_Movimiento"] == "Gasto" else _monto(t)
+    montos_por_clave = defaultdict(list)
+    propio_por_sub = defaultdict(float)
+    propio_por_quincena = defaultdict(float)
+    for t in sorted(del_mes, key=lambda t: (str(t.get("fecha")), t.get("id_transaccion", 0))):
+        if t["tipo_movimiento"] in ("Ingreso", "Gasto"):
+            clave = (t["tipo_movimiento"], t["id_subcategoria"])
+            m = propio(t) if t["tipo_movimiento"] == "Gasto" else _monto(t)
             montos_por_clave[clave].append(m)
             propio_por_sub[clave] += m
-            propio_por_quincena[(*clave, 1 if _fecha(t["Fecha"]).day <= 15 else 2)] += m
+            propio_por_quincena[(*clave, 1 if _fecha(t.get("fecha")).day <= 15 else 2)] += m
 
-    # 2. Fijos: los pagos de cada subcategoría se asignan a sus fijos (ver _asignar_pagos).
-    #    Se usa la parte propia: el plan es lo que te corresponde pagar a ti. Si pagas el arriendo
-    #    completo y lo compartes, tu parte cubre el fijo; si lo pagó otra persona, también.
-    # Valor del mes: el ajuste de ese mes si existe (p. ej. la factura llegó por más); si no, la plantilla
-    ajustes = {a["ID_Registro"]: _monto(a) for a in _registros("Ajustes_Mes", id_usuario)
-               if a["Anio"] == anio and a["Mes"] == mes}
+    ajustes = {a["id_registro"]: _monto(a) for a in _fetch("ajustes_mes", id_usuario)
+               if a["anio"] == anio and a["mes"] == mes}
 
     def valor_mes(p):
-        return ajustes.get(p["ID_Registro"], _monto(p))
+        return ajustes.get(p["id_registro"], _monto(p))
 
-    plan_fijos = sorted((p for p in plan if p["Tipo"] != TIPO_PRESUPUESTO),
-                        key=lambda p: (p["Dia_Mes"] or 99, p["ID_Registro"]))
+    plan_fijos = sorted((p for p in plan if p["tipo"] != TIPO_PRESUPUESTO),
+                        key=lambda p: (p.get("dia_mes") or 99, p["id_registro"]))
     cubierto_por_registro, disponible = {}, {}
-    for clave in {("Ingreso" if p["Tipo"] == "Ingreso Fijo" else "Gasto", p["ID_Subcategoria"]) for p in plan_fijos}:
+    for clave in {("Ingreso" if p["tipo"] == "Ingreso Fijo" else "Gasto", p["id_subcategoria"]) for p in plan_fijos}:
         del_grupo = [p for p in plan_fijos
-                     if ("Ingreso" if p["Tipo"] == "Ingreso Fijo" else "Gasto", p["ID_Subcategoria"]) == clave]
+                     if ("Ingreso" if p["tipo"] == "Ingreso Fijo" else "Gasto", p["id_subcategoria"]) == clave]
         cubiertos, sobrante = _asignar_pagos(montos_por_clave.get(clave, []), [valor_mes(p) for p in del_grupo])
-        cubierto_por_registro.update({p["ID_Registro"]: c for p, c in zip(del_grupo, cubiertos)})
+        cubierto_por_registro.update({p["id_registro"]: c for p, c in zip(del_grupo, cubiertos)})
         disponible[clave] = sobrante
 
     fijos = []
     for p in plan_fijos:
-        tipo_mov = "Ingreso" if p["Tipo"] == "Ingreso Fijo" else "Gasto"
+        tipo_mov = "Ingreso" if p["tipo"] == "Ingreso Fijo" else "Gasto"
         monto = valor_mes(p)
-        cubierto = cubierto_por_registro[p["ID_Registro"]]
-        vencimiento = date(anio, mes, min(p["Dia_Mes"] or ultimo_dia, ultimo_dia))
+        cubierto = cubierto_por_registro[p["id_registro"]]
+        vencimiento = date(anio, mes, min(p.get("dia_mes") or ultimo_dia, ultimo_dia))
 
         fijos.append({
-            "id_registro": p["ID_Registro"],
-            "tipo": p["Tipo"],
+            "id_registro": p["id_registro"],
+            "tipo": p["tipo"],
             "tipo_movimiento": tipo_mov,
-            "concepto": p["Nombre_Concepto"],
-            "id_subcategoria": p["ID_Subcategoria"],
-            "subcategoria": subcategorias.get(p["ID_Subcategoria"], "Desconocida"),
-            "dia_mes": p["Dia_Mes"],
+            "concepto": p["nombre_concepto"],
+            "id_subcategoria": p["id_subcategoria"],
+            "subcategoria": subcategorias.get(p["id_subcategoria"], "Desconocida"),
+            "dia_mes": p["dia_mes"],
             "vencimiento": vencimiento.isoformat(),
             "monto_plan": _monto(p),
-            "ajustado": p["ID_Registro"] in ajustes,
-            "monto": monto,  # valor de este mes (ajustado o plantilla)
+            "ajustado": p["id_registro"] in ajustes,
+            "monto": monto,
             "cubierto": cubierto,
-            "pagado": cubierto,  # se completa abajo con lo pagado de más
+            "pagado": cubierto,
             "faltante": monto - cubierto,
             "estado": _estado_fijo(monto, cubierto, vencimiento, hoy),
         })
 
-    # Lo que sobra en una subcategoría después de cubrir todos sus fijos se pagó de más:
-    # se suma al último fijo de esa subcategoría (p. ej. luz planeada en 90.000 y pagada en 95.000)
     ultimo_por_clave = {(f["tipo_movimiento"], f["id_subcategoria"]): f for f in fijos}
     for clave, f in ultimo_por_clave.items():
         f["pagado"] += max(disponible.get(clave, 0), 0)
 
     for f in fijos:
-        # Desvío contra la plantilla: con lo pagado si ya se pagó; si no, con el valor ajustado del mes
         real = f["pagado"] if f["estado"] == "pagado" else f["monto"]
         f["diferencia_plan"] = real - f["monto_plan"]
 
-    # 3. Presupuestos (topes de gasto variable, "bolsas" que se van gastando con compras parciales).
-    #    Mensual: un tope para todo el mes. Quincenal: el valor es por quincena (1-15 y 16-fin),
-    #    cada una con su propio avance; el tope del mes es el doble.
     def periodo(gastado, tope, fin_periodo: date) -> dict:
         return {
             "gastado": gastado,
@@ -334,15 +290,15 @@ def resumen_mes(mes: int, anio: int, id_usuario: int, hoy: date | None = None) -
             "restante": tope - gastado,
             "porcentaje": round(gastado / tope * 100, 1) if tope > 0 else 0,
             "excedido": gastado > tope,
-            "cerrado": fin_periodo < hoy,  # ya terminó: lo que no se gastó se ahorró
+            "cerrado": fin_periodo < hoy,
         }
 
     presupuestos = []
-    for p in (p for p in plan if p["Tipo"] == TIPO_PRESUPUESTO):
+    for p in (p for p in plan if p["tipo"] == TIPO_PRESUPUESTO):
         valor = valor_mes(p)
-        sub = p["ID_Subcategoria"]
-        quincenal = p.get("Periodicidad") == "Quincenal"
-        gastado = propio_por_sub.get(("Gasto", sub), 0.0)  # solo tu parte cuenta contra el tope
+        sub = p["id_subcategoria"]
+        quincenal = p.get("periodicidad") == "Quincenal"
+        gastado = propio_por_sub.get(("Gasto", sub), 0.0)
 
         if quincenal:
             quincenas = [
@@ -355,19 +311,18 @@ def resumen_mes(mes: int, anio: int, id_usuario: int, hoy: date | None = None) -
             restante_abierto = 0.0 if date(anio, mes, ultimo_dia) < hoy else max(valor - gastado, 0)
 
         presupuestos.append({
-            "id_registro": p["ID_Registro"],
-            "concepto": p["Nombre_Concepto"],
+            "id_registro": p["id_registro"],
+            "concepto": p["nombre_concepto"],
             "subcategoria": subcategorias.get(sub, "Desconocida"),
             "periodicidad": "Quincenal" if quincenal else "Mensual",
-            "valor_periodo": valor,        # por quincena o por mes (el que se ajusta)
+            "valor_periodo": valor,
             "tope_plan": _monto(p),
-            "ajustado": p["ID_Registro"] in ajustes,
+            "ajustado": p["id_registro"] in ajustes,
             **periodo(gastado, valor * 2 if quincenal else valor, date(anio, mes, ultimo_dia)),
             "quincenas": quincenas,
-            "restante_abierto": restante_abierto,  # lo que aún se puede gastar en periodos no cerrados
+            "restante_abierto": restante_abierto,
         })
 
-    # 4. Proyección: cómo terminaría el mes si se cumple lo planeado
     ingresos_plan = sum(f["monto"] for f in fijos if f["tipo_movimiento"] == "Ingreso")
     gastos_fijos_plan = sum(f["monto"] for f in fijos if f["tipo_movimiento"] == "Gasto")
     presupuestos_plan = sum(p["tope"] for p in presupuestos)
@@ -387,7 +342,6 @@ def resumen_mes(mes: int, anio: int, id_usuario: int, hoy: date | None = None) -
             "por_pagar": por_pagar,
             "presupuesto_restante": presupuesto_restante,
             "saldo_proyectado": ingresos - gastos + por_recibir - por_pagar - presupuesto_restante,
-            # Positivo en gastos = gastaste más de lo planeado; positivo en ingresos = recibiste más
             "desvio_gastos_fijos": sum(f["diferencia_plan"] for f in fijos if f["tipo_movimiento"] == "Gasto"),
             "desvio_ingresos_fijos": sum(f["diferencia_plan"] for f in fijos if f["tipo_movimiento"] == "Ingreso"),
         },
@@ -395,18 +349,16 @@ def resumen_mes(mes: int, anio: int, id_usuario: int, hoy: date | None = None) -
         "presupuestos": presupuestos,
     }
 
-
 # ---------- Patrimonio ----------
 
-def patrimonio(id_usuario: int) -> dict:
-    """Foto actual: dinero en cuentas, deuda de tarjetas y deudas con personas."""
+def patrimonio(id_usuario: str) -> dict:
     cuentas = saldos_cuentas(id_usuario)
-    deudas = [d for d in deudas_con_saldo(id_usuario) if d["Saldo_Pendiente"] > 0]
+    deudas = [d for d in deudas_con_saldo(id_usuario) if d["saldo_pendiente"] > 0]
 
     en_cuentas = sum(c["saldo_actual"] for c in cuentas if c["tipo"] != "Crédito")
-    tarjetas = sum(c["saldo_actual"] for c in cuentas if c["tipo"] == "Crédito")  # negativo = deuda
-    me_deben = sum(d["Saldo_Pendiente"] for d in deudas if d["Tipo_Deuda"] == "Me debe")
-    debo = sum(d["Saldo_Pendiente"] for d in deudas if d["Tipo_Deuda"] == "Le debo")
+    tarjetas = sum(c["saldo_actual"] for c in cuentas if c["tipo"] == "Crédito")
+    me_deben = sum(d["saldo_pendiente"] for d in deudas if d["tipo_deuda"] == "Me debe")
+    debo = sum(d["saldo_pendiente"] for d in deudas if d["tipo_deuda"] == "Le debo")
 
     return {
         "en_cuentas": en_cuentas,
