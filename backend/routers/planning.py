@@ -1,6 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-# Asegúrate de importar el cliente de supabase que uses en tu proyecto, 
-# por ejemplo: from backend.database import supabase
 from backend.database import supabase 
 from backend.models import ActivoUpdate, AjusteMes, Planificacion, PlanificacionUpdate
 from backend.seguridad import usuario_actual
@@ -15,7 +13,24 @@ def _validar_subcategoria(id_subcategoria: int, uid: str):
 @router.get("/")
 def obtener_planificacion(uid: str = Depends(usuario_actual)):
     res = supabase.table("planificacion").select("*").eq("id_usuario", uid).execute()
-    return res.data
+    
+    # Traductor: Convierte las minúsculas de Supabase a las Mayúsculas que exige planificacion.js
+    registros = []
+    for p in res.data:
+        registros.append({
+            "ID_Registro": p.get("id_registro") or p.get("id"),
+            "ID_Usuario": p.get("id_usuario"),
+            "Tipo": p.get("tipo"),
+            "Nombre_Concepto": p.get("nombre_concepto"),
+            "Monto": p.get("monto"),
+            "Dia_Mes": p.get("dia_mes"),
+            "ID_Subcategoria": p.get("id_subcategoria"),
+            "Fecha_Inicio": p.get("fecha_inicio"),
+            "Fecha_Fin": p.get("fecha_fin"),
+            "Periodicidad": p.get("periodicidad"),
+            "Activo": p.get("activo")
+        })
+    return registros
 
 @router.post("/")
 def crear_planificacion(plan: Planificacion, uid: str = Depends(usuario_actual)):
@@ -67,7 +82,6 @@ def ajustar_mes(id_registro: int, anio: int, mes: int, ajuste: AjusteMes, uid: s
     if not 1 <= mes <= 12:
         raise HTTPException(status_code=400, detail="El mes debe estar entre 1 y 12")
     
-    # Validar que la planificación pertenezca al usuario
     plan = supabase.table("planificacion").select("id_registro").eq("id_registro", id_registro).eq("id_usuario", uid).execute()
     if not plan.data:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
@@ -94,7 +108,6 @@ def quitar_ajuste_mes(id_registro: int, anio: int, mes: int, uid: str = Depends(
 
 @router.delete("/{id_registro}")
 def eliminar_planificacion(id_registro: int, uid: str = Depends(usuario_actual)):
-    # Limpiar los ajustes primero para evitar conflictos de llaves foráneas
     supabase.table("ajustes_mes").delete().eq("id_registro", id_registro).eq("id_usuario", uid).execute()
     
     res = supabase.table("planificacion").delete().eq("id_registro", id_registro).eq("id_usuario", uid).execute()
