@@ -2,8 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from backend.routers import transactions, debts, categories, accounts, liquidaciones, auth
-# from backend.routers import planning, dashboard  # TODO: Pendientes de migrar a Supabase
+from backend.routers import transactions, debts, categories, accounts, liquidaciones, auth, planning, dashboard 
 
 app = FastAPI(title="OptiFin API")
 
@@ -22,8 +21,8 @@ app.include_router(categories.router)
 app.include_router(accounts.router)
 app.include_router(liquidaciones.router)
 app.include_router(auth.router)
-# app.include_router(planning.router)
-# app.include_router(dashboard.router)
+app.include_router(planning.router)
+app.include_router(dashboard.router)
 
 # 2. Al final, montamos la interfaz visual. 
 # Esto convierte la carpeta "frontend" en la cara pública de tu app.
