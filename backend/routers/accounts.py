@@ -34,28 +34,22 @@ def obtener_cuentas_con_saldos(uid: str = Depends(usuario_actual)):
 
 @router.post("/")
 def crear_cuenta(cuenta: Cuenta, uid: str = Depends(usuario_actual)):
-    try:
-        res = supabase.table("cuentas").insert({
-            "id_usuario": uid,
-            "nombre_cuenta": cuenta.nombre_cuenta,
-            "tipo_cuenta": cuenta.tipo_cuenta,
-            "saldo_inicial": cuenta.saldo_inicial
-        }).execute()
-        return {"mensaje": "Cuenta creada exitosamente", "id_cuenta": res.data[0]['id_cuenta']}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    res = supabase.table("cuentas").insert({
+        "id_usuario": uid,
+        "nombre_cuenta": cuenta.nombre_cuenta,
+        "tipo_cuenta": cuenta.tipo_cuenta,
+        "saldo_inicial": cuenta.saldo_inicial
+    }).execute()
+    return {"mensaje": "Cuenta creada exitosamente", "id_cuenta": res.data[0]['id_cuenta']}
 
 @router.put("/{id_cuenta}")
 def editar_cuenta(id_cuenta: int, cuenta: Cuenta, uid: str = Depends(usuario_actual)):
-    try:
-        supabase.table("cuentas").update({
-            "nombre_cuenta": cuenta.nombre_cuenta,
-            "tipo_cuenta": cuenta.tipo_cuenta,
-            "saldo_inicial": cuenta.saldo_inicial
-        }).eq("id_cuenta", id_cuenta).eq("id_usuario", uid).execute()
-        return {"mensaje": "Cuenta actualizada"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    supabase.table("cuentas").update({
+        "nombre_cuenta": cuenta.nombre_cuenta,
+        "tipo_cuenta": cuenta.tipo_cuenta,
+        "saldo_inicial": cuenta.saldo_inicial
+    }).eq("id_cuenta", id_cuenta).eq("id_usuario", uid).execute()
+    return {"mensaje": "Cuenta actualizada"}
 
 @router.delete("/{id_cuenta}")
 def eliminar_cuenta(id_cuenta: int, uid: str = Depends(usuario_actual)):

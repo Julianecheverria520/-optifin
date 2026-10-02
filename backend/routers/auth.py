@@ -3,7 +3,7 @@ import re
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, field_validator
 
-from backend.database import supabase
+from backend.database import cliente_auth, supabase
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -53,7 +53,9 @@ class RegisterRequest(BaseModel):
 def login(req: LoginRequest):
     try:
         # Supabase valida la contraseña y devuelve un JWT
-        res = supabase.auth.sign_in_with_password({
+        # Cliente desechable: iniciar sesión en el cliente del servidor cambiaría la identidad
+        # de TODAS las consultas de la app (ver backend/database.py)
+        res = cliente_auth().auth.sign_in_with_password({
             "email": req.email,
             "password": req.password
         })
@@ -72,7 +74,7 @@ def login(req: LoginRequest):
 def registro(req: RegisterRequest):
     try:
         # Supabase crea el usuario y guarda el nombre en los metadatos
-        res = supabase.auth.sign_up({
+        res = cliente_auth().auth.sign_up({
             "email": req.email,
             "password": req.password,
             "options": {

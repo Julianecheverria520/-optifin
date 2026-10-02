@@ -1,5 +1,8 @@
 // Configuración compartida por todas las páginas. 
-const API_URL = "https://optifin-bhok.onrender.com";
+// El mismo servidor que entrega las páginas atiende la API: en Render es Render y en local es tu
+// uvicorn. Así nunca se mezclan (antes, abrir la app en local modificaba los datos de producción).
+// Si abres el HTML directo desde el disco (file://), se usa el backend local.
+const API_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 
 // --- SISTEMA DE SESIÓN ---
 let USUARIO_ACTUAL = null;
