@@ -10,7 +10,21 @@ const ENLACES_MENU = [
     { separador: true },
     { pagina: 'configuracion', href: 'configuracion.html', texto: 'Cuentas', icono: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z' },
     { pagina: 'categorias', href: 'categorias.html', texto: 'Categorías', icono: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z' },
+    { pagina: 'admin', href: 'admin.html', texto: 'Administración', soloAdmin: true, icono: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
 ];
+
+// ¿El usuario es administrador? El servidor decide; se pregunta una vez por pestaña y se recuerda.
+const CLAVE_ADMIN = () => `optifin_admin_${USUARIO_ACTUAL.id}`;
+function esAdminGuardado() {
+    try { return sessionStorage.getItem(CLAVE_ADMIN()); } catch { return null; }
+}
+async function consultarAdmin(paginaActiva) {
+    try {
+        const { admin } = await api('/admin/soy-admin');
+        try { sessionStorage.setItem(CLAVE_ADMIN(), admin ? '1' : '0'); } catch { /* sin almacenamiento */ }
+        if (admin) cargarSidebar(paginaActiva);
+    } catch { /* sin conexión: el enlace simplemente no aparece */ }
+}
 
 const icono = (d, clase = 'w-5 h-5') =>
     `<svg class="${clase}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${d}"></path></svg>`;
@@ -41,7 +55,9 @@ function cargarSidebar(paginaActiva) {
     if (!USUARIO_ACTUAL) return;
 
     const nombre = USUARIO_ACTUAL.nombre || USUARIO_ACTUAL.email || 'Usuario';
-    const enlaces = ENLACES_MENU.map(e => e.separador
+    const admin = esAdminGuardado();
+    if (admin === null) consultarAdmin(paginaActiva);
+    const enlaces = ENLACES_MENU.filter(e => !e.soloAdmin || admin === '1').map(e => e.separador
         ? '<div class="mt-6 mb-3 px-4"><hr class="border-[#1a295c]"></div>'
         : `<a href="${e.href}" class="flex items-center gap-3 py-3 px-4 rounded-xl transition-all duration-200 ${paginaActiva === e.pagina ? 'bg-blue-600 text-white shadow-md' : 'text-gray-300 hover:bg-[#1a295c] hover:text-white'}">
                ${icono(e.icono)}<span class="text-sm font-medium">${e.texto}</span>

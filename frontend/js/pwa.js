@@ -51,7 +51,7 @@ function mostrarInstruccionesIOS() {
                     <li>Elige <b>Agregar a pantalla de inicio</b>.</li>
                     <li>Toca <b>Agregar</b>.</li>
                 </ol>
-                <button type="button" onclick="document.getElementById('modal-ios').remove()" class="w-full bg-[#111c43] text-white font-bold py-3 rounded-xl">Entendido</button>
+                <button type="button" onclick="document.getElementById('modal-ios').remove()" class="w-full bg-[#0a0f0d] text-white font-bold py-3 rounded-xl">Entendido</button>
             </div>
         </div>`);
 }

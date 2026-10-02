@@ -1,8 +1,10 @@
 // Configuración compartida por todas las páginas. 
 // El mismo servidor que entrega las páginas atiende la API: en Render es Render y en local es tu
 // uvicorn. Así nunca se mezclan (antes, abrir la app en local modificaba los datos de producción).
-// Si abres el HTML directo desde el disco (file://), se usa el backend local.
-const API_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
+// Si abres el HTML directo desde el disco (file://) o con otro servidor local (p. ej. Live Server
+// en el puerto 5500), se usa el backend local del puerto 8000. Nunca se apunta a producción desde local.
+const ES_LOCAL = window.location.protocol === "file:" || ["127.0.0.1", "localhost"].includes(window.location.hostname);
+const API_URL = ES_LOCAL && window.location.port !== "8000" ? "http://127.0.0.1:8000" : "";
 
 // --- SISTEMA DE SESIÓN ---
 // La sesión guarda: id, nombre, email, token (dura 60 min), refresh_token y expira (segundos Unix).
@@ -105,7 +107,9 @@ async function api(ruta, opciones = {}, reintento = false) {
     }
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-        throw new Error(mensajeDeError(data) || `Error del servidor (${res.status})`);
+        const error = new Error(mensajeDeError(data) || `Error del servidor (${res.status})`);
+        error.status = res.status;
+        throw error;
     }
     return data;
 }

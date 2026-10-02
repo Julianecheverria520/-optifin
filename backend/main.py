@@ -8,7 +8,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.routers import transactions, debts, categories, accounts, liquidaciones, auth, planning, dashboard
+from backend.routers import transactions, debts, categories, accounts, liquidaciones, auth, planning, dashboard, admin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("optifin")
@@ -55,6 +55,7 @@ app.include_router(liquidaciones.router)
 app.include_router(auth.router)
 app.include_router(planning.router)
 app.include_router(dashboard.router)
+app.include_router(admin.router)
 
 # 2. Al final, la interfaz: la carpeta "frontend" es la cara pública de la app
 app.mount("/", StaticFiles(directory=CARPETA_FRONTEND, html=True), name="frontend")

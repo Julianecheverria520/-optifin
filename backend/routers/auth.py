@@ -87,6 +87,8 @@ def login(req: LoginRequest):
     except Exception as e:
         if "not confirmed" in str(e).lower():
             raise HTTPException(status_code=401, detail="Aún no has confirmado tu correo. Revisa tu bandeja de entrada.")
+        if "banned" in str(e).lower():
+            raise HTTPException(status_code=403, detail="Tu cuenta está suspendida. Contacta al administrador.")
         raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
     return {"mensaje": "Login exitoso", "usuario": _usuario(res.user), **_sesion(res.session)}
 

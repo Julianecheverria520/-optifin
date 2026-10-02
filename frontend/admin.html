@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- App instalable (PWA) -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0a0f0d">
+    <link rel="icon" type="image/png" href="iconos/favicon-32.png">
+    <link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="OptiFin">
+    <title>OptiFin - Administración</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-gray-100 font-sans flex h-screen">
+
+    <aside id="sidebar-container" class="w-64 bg-blue-900 text-white flex flex-col h-full shadow-lg"></aside>
+
+    <main class="flex-1 p-8 overflow-y-auto">
+        <h2 class="text-3xl font-bold text-gray-800 mb-1">Administración</h2>
+        <p class="text-gray-500 mb-6">Usuarios de OptiFin: restablecer contraseñas y suspender o reactivar cuentas.</p>
+
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto text-sm">
+                    <thead>
+                        <tr class="bg-gray-100 text-gray-600 uppercase leading-normal">
+                            <th class="py-3 px-4 text-left">Usuario</th>
+                            <th class="py-3 px-4 text-left">Último ingreso</th>
+                            <th class="py-3 px-4 text-left">Estado</th>
+                            <th class="py-3 px-4 text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla_usuarios" class="text-gray-700 font-medium"></tbody>
+                </table>
+            </div>
+            <p class="text-xs text-gray-400 mt-4">Una cuenta suspendida no puede iniciar sesión; si tenía la app abierta, pierde el acceso en máximo 60 minutos.</p>
+        </div>
+    </main>
+
+    <!-- Restablecer contraseña -->
+    <div id="modal_clave" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onclick="if (event.target === this) cerrarModalClave()">
+        <form id="form_clave" class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div>
+                <h3 class="text-lg font-bold text-gray-800">Nueva contraseña</h3>
+                <p id="clave_para" class="text-sm text-gray-500"></p>
+            </div>
+            <input type="password" id="clave_nueva" required minlength="6" autocomplete="new-password" placeholder="Mínimo 6 caracteres" class="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none">
+            <p class="text-xs text-gray-400">Compártela por un canal privado y pídele que la cambie al entrar (ícono de llave en el menú).</p>
+            <div class="flex gap-2">
+                <button type="button" onclick="cerrarModalClave()" class="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 rounded-xl">Cancelar</button>
+                <button type="submit" class="flex-1 bg-gray-800 text-white font-bold py-2.5 rounded-xl">Guardar</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="js/config.js"></script>
+    <script src="js/pwa.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('admin');</script>
+    <script src="js/admin.js"></script>
+</body>
+</html>
