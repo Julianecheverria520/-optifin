@@ -1,73 +1,59 @@
-"""Tokens de sesión firmados (HMAC-SHA256) y dependencia para saber qué usuario hace cada petición.
+"""Validación de la sesión: qué usuario hace cada petición.
 
-Formato del token: "<id_usuario>.<expira_unix>.<firma>". La firma usa una clave secreta:
-- en producción (Render) se define la variable de entorno OPTIFIN_SECRET;
-- en local, si no existe, se genera una vez y se guarda en el archivo .optifin_secret (no subirlo a git).
+El navegador envía el access token de Supabase ("Authorization: Bearer <token>"). Se valida
+LOCALMENTE con las claves públicas del proyecto (JWKS, firma ES256), que se descargan una vez
+y quedan en caché: así no se llama a Supabase Auth en cada petición.
+Si las claves no se pueden obtener, se valida preguntándole a Supabase (más lento, pero seguro).
+
+Nota: un token sigue siendo válido hasta que expira (60 min) aunque el usuario cierre sesión;
+el navegador lo borra al cerrar sesión y lo renueva con el refresh token (POST /auth/renovar).
 """
-import hashlib
-import hmac
-import os
-import secrets
-import time
+import logging
 
-from fastapi import HTTPException, Header
-from backend.database import supabase
+import jwt
+from fastapi import Header, HTTPException
 
-from backend.excel_store import BASE_DIR
+from backend.database import SUPABASE_URL, supabase
 
-ARCHIVO_SECRETO = os.path.join(BASE_DIR, ".optifin_secret")
+logger = logging.getLogger("optifin.seguridad")
 
+EMISOR = f"{SUPABASE_URL.rstrip('/')}/auth/v1"
+_claves = jwt.PyJWKClient(f"{EMISOR}/.well-known/jwks.json", cache_keys=True, lifespan=3600, timeout=10)
 
-def _cargar_secreto() -> str:
-    if os.environ.get("OPTIFIN_SECRET"):
-        return os.environ["OPTIFIN_SECRET"]
-    if os.path.exists(ARCHIVO_SECRETO):
-        with open(ARCHIVO_SECRETO, encoding="utf-8") as f:
-            return f.read().strip()
-    secreto = secrets.token_hex(32)
-    with open(ARCHIVO_SECRETO, "w", encoding="utf-8") as f:
-        f.write(secreto)
-    return secreto
+SESION_EXPIRADA = "Tu sesión expiró. Inicia sesión de nuevo."
+MARGEN_RELOJ = 120  # segundos
 
 
-SECRETO = _cargar_secreto()
-DURACION_CORTA = 12 * 3600        # sin "mantener sesión"
-DURACION_LARGA = 30 * 24 * 3600   # con "mantener sesión"
-
-
-def _firma(contenido: str) -> str:
-    return hmac.new(SECRETO.encode(), contenido.encode(), hashlib.sha256).hexdigest()
-
-
-def crear_token(id_usuario: int, recordar: bool) -> str:
-    expira = int(time.time()) + (DURACION_LARGA if recordar else DURACION_CORTA)
-    contenido = f"{id_usuario}.{expira}"
-    return f"{contenido}.{_firma(contenido)}"
-
-
-def verificar_token(token: str):
-    """ID del usuario si el token es válido y no ha expirado; si no, None."""
-    try:
-        id_usuario, expira, firma = token.split(".")
-        if not hmac.compare_digest(firma, _firma(f"{id_usuario}.{expira}")):
-            return None
-        if int(expira) < time.time():
-            return None
-        return int(id_usuario)
-    except (ValueError, AttributeError):
-        return None
-
-
-def usuario_actual(authorization: str = Header(None)) -> str:
-    """Extrae el UUID de Supabase del JWT y valida la sesión."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="No autorizado")
-    
-    token = authorization.split(" ")[1]
+def _validar_en_supabase(token: str) -> str:
+    """Respaldo: Supabase Auth confirma el token (una llamada de red)."""
     try:
         res = supabase.auth.get_user(token)
-        if not res.user:
-            raise HTTPException(status_code=401, detail="Sesión inválida")
-        return res.user.id
     except Exception:
-        raise HTTPException(status_code=401, detail="Tu sesión caducó. Inicia sesión de nuevo.")
+        raise HTTPException(status_code=401, detail=SESION_EXPIRADA)
+    if not res or not res.user:
+        raise HTTPException(status_code=401, detail=SESION_EXPIRADA)
+    return res.user.id
+
+
+def usuario_actual(authorization: str | None = Header(default=None)) -> str:
+    """Dependencia de FastAPI: devuelve el ID (UUID) del usuario del token o responde 401."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No autorizado")
+    token = authorization[7:].strip()
+
+    try:
+        clave = _claves.get_signing_key_from_jwt(token)
+    except jwt.PyJWKClientConnectionError:
+        logger.warning("No se pudieron descargar las claves JWKS; se valida con Supabase")
+        return _validar_en_supabase(token)
+    except (jwt.PyJWKClientError, jwt.InvalidTokenError):
+        raise HTTPException(status_code=401, detail=SESION_EXPIRADA)
+
+    try:
+        # leeway: margen por diferencias de reloj entre este servidor y Supabase (en una prueba local
+        # el reloj iba 84 s atrás y el token parecía emitido "en el futuro")
+        datos = jwt.decode(token, clave.key, algorithms=["ES256", "RS256"],
+                           audience="authenticated", issuer=EMISOR, leeway=MARGEN_RELOJ)
+    except jwt.InvalidTokenError:  # incluye token expirado o firma inválida
+        raise HTTPException(status_code=401, detail=SESION_EXPIRADA)
+    return datos["sub"]

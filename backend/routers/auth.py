@@ -1,18 +1,23 @@
-"""Registro e inicio de sesión de usuarios usando Supabase Auth."""
-import re
-from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel, field_validator
+"""Registro, inicio de sesión, renovación de sesión y cambio de contraseña con Supabase Auth.
 
+Login, registro y renovación usan un cliente desechable (cliente_auth): iniciar sesión en el
+cliente del servidor cambiaría la identidad de TODAS las consultas de la app (ver database.py).
+"""
 import logging
+import re
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, field_validator
 
 from backend import plantilla, usuarios
 from backend.database import cliente_auth, supabase
+from backend.seguridad import usuario_actual
 
 logger = logging.getLogger("optifin.auth")
-
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 PATRON_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 def _normalizar_email(valor: str) -> str:
     valor = valor.strip().lower()
@@ -21,10 +26,16 @@ def _normalizar_email(valor: str) -> str:
     return valor
 
 
+def _validar_password(valor: str) -> str:
+    if not 6 <= len(valor) <= 128:
+        raise ValueError("La contraseña debe tener al menos 6 caracteres")
+    return valor
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
-    recordar: bool = False
+    recordar: bool = False  # el navegador decide dónde guarda la sesión; aquí no cambia nada
 
     _email = field_validator("email")(_normalizar_email)
 
@@ -35,6 +46,7 @@ class RegisterRequest(BaseModel):
     password: str
 
     _email = field_validator("email")(_normalizar_email)
+    _password = field_validator("password")(_validar_password)
 
     @field_validator("nombre")
     @classmethod
@@ -44,12 +56,26 @@ class RegisterRequest(BaseModel):
             raise ValueError("Escribe tu nombre")
         return valor
 
-    @field_validator("password")
-    @classmethod
-    def validar_password(cls, valor: str) -> str:
-        if not 6 <= len(valor) <= 128:
-            raise ValueError("La contraseña debe tener al menos 6 caracteres")
-        return valor
+
+class RenovarRequest(BaseModel):
+    refresh_token: str
+
+
+class CambioPasswordRequest(BaseModel):
+    actual: str
+    nueva: str
+
+    _nueva = field_validator("nueva")(_validar_password)
+
+
+def _sesion(session) -> dict:
+    """Lo que el navegador guarda para mantener la sesión: el access token (dura 60 min),
+    el refresh token para renovarlo y el momento en que expira (segundos Unix)."""
+    return {"token": session.access_token, "refresh_token": session.refresh_token, "expira": session.expires_at}
+
+
+def _usuario(user) -> dict:
+    return {"id": user.id, "nombre": (user.user_metadata or {}).get("nombre", ""), "email": user.email}
 
 
 # ---------- Endpoints ----------
@@ -57,36 +83,32 @@ class RegisterRequest(BaseModel):
 @router.post("/login")
 def login(req: LoginRequest):
     try:
-        # Supabase valida la contraseña y devuelve un JWT
-        # Cliente desechable: iniciar sesión en el cliente del servidor cambiaría la identidad
-        # de TODAS las consultas de la app (ver backend/database.py)
-        res = cliente_auth().auth.sign_in_with_password({
-            "email": req.email,
-            "password": req.password
-        })
-        
-        usuario = {
-            "id": res.user.id, # Ahora es un UUID (ej: "123e4567-e89b-...")
-            "nombre": res.user.user_metadata.get("nombre", ""),
-            "email": res.user.email
-        }
-        return {"mensaje": "Login exitoso", "usuario": usuario, "token": res.session.access_token}
+        res = cliente_auth().auth.sign_in_with_password({"email": req.email, "password": req.password})
     except Exception as e:
+        if "not confirmed" in str(e).lower():
+            raise HTTPException(status_code=401, detail="Aún no has confirmado tu correo. Revisa tu bandeja de entrada.")
         raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
+    return {"mensaje": "Login exitoso", "usuario": _usuario(res.user), **_sesion(res.session)}
+
+
+@router.post("/renovar")
+def renovar_sesion(req: RenovarRequest):
+    """Cambia el refresh token por una sesión nueva (el navegador lo llama antes de que expire)."""
+    try:
+        res = cliente_auth().auth.refresh_session(req.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Tu sesión expiró. Inicia sesión de nuevo.")
+    if not res or not res.session:
+        raise HTTPException(status_code=401, detail="Tu sesión expiró. Inicia sesión de nuevo.")
+    return {"usuario": _usuario(res.user), **_sesion(res.session)}
 
 
 @router.post("/registro")
 def registro(req: RegisterRequest):
     try:
         # Supabase crea el usuario y guarda el nombre en los metadatos
-        res = cliente_auth().auth.sign_up({
-            "email": req.email,
-            "password": req.password,
-            "options": {
-                "data": {"nombre": req.nombre}
-            }
-        })
-        
+        res = cliente_auth().auth.sign_up({"email": req.email, "password": req.password,
+                                           "options": {"data": {"nombre": req.nombre}}})
         if not res.user:
             raise HTTPException(status_code=400, detail="No se pudo crear la cuenta")
     except HTTPException:
@@ -109,37 +131,27 @@ def registro(req: RegisterRequest):
     usuario = {"id": res.user.id, "nombre": req.nombre, "email": req.email}
     if not res.session:
         # Supabase tiene activa la confirmación de correo: aún no puede iniciar sesión
-        return {
-            "mensaje": "Cuenta creada. Revisa tu correo y confirma tu dirección para poder iniciar sesión.",
-            "usuario": usuario,
-            "token": None,
-            "requiere_confirmacion": True,
-        }
-    return {
-        "mensaje": "Cuenta creada exitosamente",
-        "usuario": usuario,
-        "token": res.session.access_token,
-        "requiere_confirmacion": False,
-    }
+        return {"mensaje": "Cuenta creada. Revisa tu correo y confirma tu dirección para poder iniciar sesión.",
+                "usuario": usuario, "token": None, "requiere_confirmacion": True}
+    return {"mensaje": "Cuenta creada exitosamente", "usuario": usuario,
+            "requiere_confirmacion": False, **_sesion(res.session)}
 
 
 @router.get("/yo")
-def usuario_de_la_sesion(authorization: str = Header(None)):
-    """Validamos el JWT directamente con Supabase (reemplaza tu antigua función usuario_actual)."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token no proporcionado")
-    
-    token = authorization.split(" ")[1]
+def usuario_de_la_sesion(uid: str = Depends(usuario_actual)):
+    """Datos del usuario del token."""
+    return _usuario(supabase.auth.admin.get_user_by_id(uid).user)
+
+
+@router.post("/cambiar-password")
+def cambiar_password(req: CambioPasswordRequest, uid: str = Depends(usuario_actual)):
+    """Exige la contraseña actual (por si alguien usa una sesión abierta en otro equipo)."""
+    if req.actual == req.nueva:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta de la actual")
+    email = supabase.auth.admin.get_user_by_id(uid).user.email
     try:
-        # Supabase verifica criptográficamente si el token es válido y no ha expirado
-        res = supabase.auth.get_user(token)
-        if not res.user:
-            raise HTTPException(status_code=401, detail="Sesión inválida")
-        
-        return {
-            "id": res.user.id,
-            "nombre": res.user.user_metadata.get("nombre", ""),
-            "email": res.user.email
-        }
+        cliente_auth().auth.sign_in_with_password({"email": email, "password": req.actual})
     except Exception:
-        raise HTTPException(status_code=401, detail="Tu sesión caducó. Inicia sesión de nuevo.")
+        raise HTTPException(status_code=400, detail="La contraseña actual no es correcta")
+    supabase.auth.admin.update_user_by_id(uid, {"password": req.nueva})
+    return {"mensaje": "Contraseña actualizada"}

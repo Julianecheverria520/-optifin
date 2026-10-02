@@ -25,8 +25,9 @@ function mostrarError(msg) {
     box.classList.remove('hidden');
 }
 
-function iniciarSesionLocal(usuario, token, recordar) {
-    const payload = JSON.stringify({ ...usuario, token });
+// Guarda la sesión: datos del usuario + token, refresh token y expiración (para renovarla sola)
+function iniciarSesionLocal(data, recordar) {
+    const payload = JSON.stringify({ ...data.usuario, token: data.token, refresh_token: data.refresh_token, expira: data.expira });
     try {
         // Solo una sesión guardada a la vez
         localStorage.removeItem('optifin_user');
@@ -65,7 +66,7 @@ document.getElementById('form-login').addEventListener('submit', async (e) => {
     await enviando(e.target, async () => {
         try {
             const data = await api("/auth/login", { method: "POST", body });
-            iniciarSesionLocal(data.usuario, data.token, recordar);
+            iniciarSesionLocal(data, recordar);
         } catch (err) {
             mostrarError(err.message);
         }
@@ -94,7 +95,7 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
                 document.getElementById('log_email').value = body.email;
                 return mostrarError(data.mensaje || "Revisa tu correo para confirmar la cuenta y luego inicia sesión.");
             }
-            iniciarSesionLocal(data.usuario, data.token, true);
+            iniciarSesionLocal(data, true);
         } catch (err) {
             mostrarError(err.message);
         }

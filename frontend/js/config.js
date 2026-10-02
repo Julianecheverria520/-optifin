@@ -5,30 +5,30 @@
 const API_URL = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 
 // --- SISTEMA DE SESIÓN ---
+// La sesión guarda: id, nombre, email, token (dura 60 min), refresh_token y expira (segundos Unix).
+// Con "Mantener sesión" va en localStorage (sobrevive al cerrar el navegador); si no, en sessionStorage.
 let USUARIO_ACTUAL = null;
+let ALMACEN_SESION = null;
 const esPaginaLogin = window.location.pathname.endsWith('login.html');
 
-// Lee la sesión de localStorage (si eligió "mantener sesión") o de sessionStorage.
-// Si el almacenamiento no está disponible o el dato está dañado, se trata como "sin sesión".
 function leerSesion() {
     for (const almacen of [() => localStorage, () => sessionStorage]) {
         try {
             const texto = almacen().getItem('optifin_user');
             if (!texto) continue;
-            let usuario = JSON.parse(texto);
-
-            // Adaptación de variables
-            if (usuario.ID_Usuario && !usuario.id) usuario.id = usuario.ID_Usuario;
-            if (usuario.Nombre && !usuario.nombre) usuario.nombre = usuario.Nombre;
-            if (usuario.Email && !usuario.email) usuario.email = usuario.Email;
-
-            // EL CAMBIO CLAVE: Ya no exigimos usuario.nombre para dejarte pasar
-            if (usuario && usuario.id && usuario.token) return usuario;
-            
-            almacen().removeItem('optifin_user'); 
-        } catch (e) { }
+            const usuario = JSON.parse(texto);
+            if (usuario && usuario.id && usuario.token) {
+                ALMACEN_SESION = almacen();
+                return usuario;
+            }
+            almacen().removeItem('optifin_user'); // dato inválido
+        } catch (e) { /* almacenamiento bloqueado o JSON dañado */ }
     }
     return null;
+}
+
+function guardarSesion() {
+    try { (ALMACEN_SESION || sessionStorage).setItem('optifin_user', JSON.stringify(USUARIO_ACTUAL)); } catch (e) { /* sin almacenamiento */ }
 }
 
 USUARIO_ACTUAL = leerSesion();
@@ -46,9 +46,42 @@ window.cerrarSesion = function() {
     try { sessionStorage.removeItem('optifin_user'); } catch (e) { /* sin almacenamiento */ }
     window.location.replace('login.html');
 };
+
+// Renueva el token con el refresh token. Si varias peticiones lo necesitan a la vez, comparten
+// la misma renovación. Devuelve true si quedó una sesión válida.
+let renovacionEnCurso = null;
+function renovarSesion() {
+    if (!USUARIO_ACTUAL || !USUARIO_ACTUAL.refresh_token) return Promise.resolve(false);
+    if (!renovacionEnCurso) {
+        renovacionEnCurso = fetch(API_URL + "/auth/renovar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: USUARIO_ACTUAL.refresh_token }),
+        })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (!data || !data.token) return false;
+                Object.assign(USUARIO_ACTUAL, { token: data.token, refresh_token: data.refresh_token, expira: data.expira });
+                guardarSesion();
+                return true;
+            })
+            .catch(() => false)
+            .finally(() => { renovacionEnCurso = null; });
+    }
+    return renovacionEnCurso;
+}
+
+// Renueva un minuto antes de que expire, para no llegar a un 401
+async function asegurarToken() {
+    if (USUARIO_ACTUAL && USUARIO_ACTUAL.expira && USUARIO_ACTUAL.expira - Date.now() / 1000 < 60) {
+        await renovarSesion();
+    }
+}
 // -------------------------
 
-async function api(ruta, opciones = {}) {
+async function api(ruta, opciones = {}, reintento = false) {
+    if (!esPaginaLogin) await asegurarToken();
+
     // El token de la sesión identifica al usuario ante el backend (cada uno ve solo sus datos)
     const autenticacion = USUARIO_ACTUAL ? { "Authorization": `Bearer ${USUARIO_ACTUAL.token}` } : {};
     const config = { ...opciones, headers: { "Content-Type": "application/json", ...autenticacion, ...(opciones.headers || {}) } };
@@ -60,15 +93,17 @@ async function api(ruta, opciones = {}) {
     try {
         res = await fetch(API_URL + ruta, config);
     } catch (err) {
-        throw new Error("No hay conexión con el servidor. ¿Está corriendo el backend?");
+        throw new Error("No hay conexión con el servidor. Revisa tu internet e intenta de nuevo.");
     }
 
-    const data = await res.json().catch(() => null);
-    // Sesión vencida o inválida: volver al login (en el login, el 401 es "contraseña incorrecta")
+    // Sesión vencida o inválida (en el login, el 401 es "contraseña incorrecta"):
+    // se intenta renovar una vez y repetir la petición; si no se puede, al login
     if (res.status === 401 && !esPaginaLogin) {
+        if (!reintento && await renovarSesion()) return api(ruta, opciones, true);
         window.cerrarSesion();
         throw new Error("Tu sesión expiró. Inicia sesión de nuevo.");
     }
+    const data = await res.json().catch(() => null);
     if (!res.ok) {
         throw new Error(mensajeDeError(data) || `Error del servidor (${res.status})`);
     }

@@ -118,7 +118,7 @@ function dibujarFijos(fijos) {
 
         return `
             <div class="py-3">
-                <div class="flex items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center justify-between gap-3">
                     <div class="min-w-0">
                         <p class="font-medium text-gray-800 truncate">${esc(f.concepto)} <span class="text-xs text-gray-400 font-normal">${f.dia_mes ? `día ${f.dia_mes}` : 'sin día fijo'}</span></p>
                         <p class="text-sm ${esIngreso ? 'text-green-700' : 'text-red-600'} font-semibold">${esIngreso ? '+' : '-'}${formatoMoneda(f.monto)} ${notaAjuste} ${detalle}</p>
@@ -200,7 +200,7 @@ function dibujarDeudasPorPersona(personas, patrimonio) {
         const desglose = p.me_debe > 0 && p.le_debo > 0
             ? `<span class="block text-xs text-gray-400">Neto de: te debe ${formatoMoneda(p.me_debe)}, le debes ${formatoMoneda(p.le_debo)}</span>` : '';
         return `
-            <div class="py-3 flex items-center justify-between gap-3">
+            <div class="py-3 flex flex-wrap items-center justify-between gap-3">
                 <div class="min-w-0">
                     <p class="font-medium text-gray-800 truncate">
                         ${esc(p.persona)}

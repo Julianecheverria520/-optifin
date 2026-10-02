@@ -430,7 +430,8 @@ document.getElementById('cal_hoy').addEventListener('click', () => {
 
 // Recordar la última vista elegida
 let vistaGuardada = 'lista';
-try { vistaGuardada = localStorage.getItem('optifin_vista_plan') || 'lista'; } catch (e) { /* sin almacenamiento */ }
+// En celular siempre se arranca en Lista (el calendario necesita ancho); en computador, la última vista usada
+try { vistaGuardada = window.innerWidth < 768 ? 'lista' : (localStorage.getItem('optifin_vista_plan') || 'lista'); } catch (e) { /* sin almacenamiento */ }
 cambiarVista(vistaGuardada === 'calendario' ? 'calendario' : 'lista');
 
 cargarConfiguracion();
