@@ -3,7 +3,12 @@ import re
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, field_validator
 
+import logging
+
+from backend import plantilla, usuarios
 from backend.database import cliente_auth, supabase
+
+logger = logging.getLogger("optifin.auth")
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -84,27 +89,38 @@ def registro(req: RegisterRequest):
         
         if not res.user:
             raise HTTPException(status_code=400, detail="No se pudo crear la cuenta")
-
-        usuario = {
-            "id": res.user.id, 
-            "nombre": req.nombre, 
-            "email": req.email
-        }
-        
-        # TODO: Como ya no usamos Excel, tu archivo 'backend.plantilla' deberá 
-        # actualizarse para hacer los INSERT de las categorías básicas directamente 
-        # en las tablas de Supabase (usando supabase.table('categorias').insert(...))
-        
-        return {
-            "mensaje": "Cuenta creada exitosamente",
-            "usuario": usuario,
-            "token": res.session.access_token if res.session else None,
-        }
+    except HTTPException:
+        raise
     except Exception as e:
         error_msg = str(e).lower()
         if "already registered" in error_msg or "already exists" in error_msg:
             raise HTTPException(status_code=400, detail="El correo ya está registrado")
-        raise HTTPException(status_code=400, detail="Error al registrar la cuenta")
+        logger.exception("Error de Supabase al registrar %s", req.email)
+        raise HTTPException(status_code=400, detail="No se pudo registrar la cuenta. Intenta de nuevo.")
+
+    usuarios.invalidar()  # que el nuevo usuario aparezca para compartir gastos
+    # Categorías estándar para que no empiece de cero (si falla, puede cargarlas luego desde Categorías)
+    try:
+        if not plantilla.tiene_categorias(res.user.id):
+            plantilla.aplicar_plantilla(res.user.id)
+    except Exception:
+        logger.exception("No se pudo cargar la plantilla al usuario %s", res.user.id)
+
+    usuario = {"id": res.user.id, "nombre": req.nombre, "email": req.email}
+    if not res.session:
+        # Supabase tiene activa la confirmación de correo: aún no puede iniciar sesión
+        return {
+            "mensaje": "Cuenta creada. Revisa tu correo y confirma tu dirección para poder iniciar sesión.",
+            "usuario": usuario,
+            "token": None,
+            "requiere_confirmacion": True,
+        }
+    return {
+        "mensaje": "Cuenta creada exitosamente",
+        "usuario": usuario,
+        "token": res.session.access_token,
+        "requiere_confirmacion": False,
+    }
 
 
 @router.get("/yo")

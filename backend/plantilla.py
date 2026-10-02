@@ -1,66 +1,47 @@
-"""Plantilla de categorías y subcategorías que recibe cada usuario nuevo.
+"""Plantilla de categorías estándar que recibe cada usuario nuevo al registrarse.
 
-Es una copia fija guardada en las hojas Plantilla_Categorias / Plantilla_Subcategorias:
-si un usuario cambia sus propias categorías, la plantilla no se altera.
+Es una copia fija, tomada de las categorías de Julián el 2026-10-02 y sin los nombres personales
+(Apto Barranquilla, Tarjeta Codensa, Compras Matías). Si un usuario cambia sus propias categorías,
+la plantilla no se altera. Para actualizarla, edita esta lista.
 """
-from backend import excel_store as db
+from backend.database import supabase
 
-HOJA_CAT = "Plantilla_Categorias"
-HOJA_SUB = "Plantilla_Subcategorias"
-COLUMNAS_CAT = ["ID_Categoria", "Nombre_Categoria", "Tipo_Movimiento"]
-COLUMNAS_SUB = ["ID_Subcategoria", "ID_Categoria", "Nombre_Subcategoria"]
-
-
-def _filas(ws):
-    return [r for r in range(2, ws.max_row + 1) if ws.cell(row=r, column=1).value is not None]
-
-
-def aplicar_plantilla(wb, id_usuario: int) -> tuple[int, int]:
-    """Copia la plantilla a las categorías del usuario (dentro de un libro abierto para edición).
-    Devuelve (categorías creadas, subcategorías creadas)."""
-    ws_pc, ws_ps = wb[HOJA_CAT], wb[HOJA_SUB]
-    ids_nuevos = {}
-    for r in _filas(ws_pc):
-        ids_nuevos[db.valor(ws_pc, r, "ID_Categoria")] = db.agregar(wb["Categorias"], {
-            "ID_Usuario": id_usuario,
-            "Nombre_Categoria": db.valor(ws_pc, r, "Nombre_Categoria"),
-            "Tipo_Movimiento": db.valor(ws_pc, r, "Tipo_Movimiento"),
-        })
-    creadas = 0
-    for r in _filas(ws_ps):
-        id_cat = ids_nuevos.get(db.valor(ws_ps, r, "ID_Categoria"))
-        if id_cat is None:
-            continue
-        db.agregar(wb["Subcategorias"], {
-            "ID_Usuario": id_usuario,
-            "ID_Categoria": id_cat,
-            "Nombre_Subcategoria": db.valor(ws_ps, r, "Nombre_Subcategoria"),
-        })
-        creadas += 1
-    return len(ids_nuevos), creadas
+# (nombre de la categoría, tipo de movimiento, [subcategorías])
+PLANTILLA = [
+    ("Ingresos Laborales", "Ingreso", ["Salario", "Primas y bonificaciones", "Honorarios / Freelance"]),
+    ("Otros Ingresos", "Ingreso", ["Arriendos recibidos", "Intereses y rendimientos", "Ventas", "Reembolsos", "Regalos recibidos", "Otros ingresos"]),
+    ("Vivienda", "Gasto", ["Arriendo / Hipoteca", "Administración", "Mantenimiento y reparaciones", "Aseo del hogar"]),
+    ("Servicios Públicos", "Gasto", ["Luz", "Agua", "Gas", "Internet", "Plan de celular"]),
+    ("Alimentación", "Gasto", ["Mercado", "Restaurantes", "Domicilios", "Café y snacks"]),
+    ("Transporte", "Gasto", ["Gasolina", "Transporte público", "Taxi / Apps", "Parqueadero y peajes", "Mantenimiento vehículo", "SOAT e impuestos vehículo"]),
+    ("Salud", "Gasto", ["EPS / Medicina prepagada", "Medicamentos", "Citas y exámenes", "Gimnasio"]),
+    ("Educación", "Gasto", ["Matrícula / Pensión", "Cursos", "Libros y materiales"]),
+    ("Entretenimiento", "Gasto", ["Salidas", "Suscripciones y membresías", "Viajes", "Hobbies"]),
+    ("Compras Personales", "Gasto", ["Ropa y calzado", "Cuidado personal", "Tecnología", "Peluquería"]),
+    ("Obligaciones Financieras", "Gasto", ["Intereses", "Cuota de manejo", "Seguros", "Impuestos", "Crédito vehículo", "Tarjeta de crédito", "Crédito celular"]),
+    ("Regalos y Donaciones", "Gasto", ["Regalos", "Donaciones"]),
+    ("Otros Gastos", "Gasto", ["Imprevistos"]),
+    ("Familia", "Gasto", ["Hijos"]),
+]
 
 
-def guardar_como_plantilla(wb, id_usuario: int) -> tuple[int, int]:
-    """Reemplaza la plantilla por las categorías actuales de un usuario."""
-    ws_pc, ws_ps = wb[HOJA_CAT], wb[HOJA_SUB]
-    for ws in (ws_pc, ws_ps):
-        if ws.max_row > 1:
-            ws.delete_rows(2, ws.max_row - 1)
+def tiene_categorias(id_usuario: str) -> bool:
+    res = supabase.table("categorias").select("id_categoria").eq("id_usuario", id_usuario).limit(1).execute()
+    return bool(res.data)
 
-    ws_c, ws_s = wb["Categorias"], wb["Subcategorias"]
-    ids_plantilla = {}
-    for r in _filas(ws_c):
-        if db.valor(ws_c, r, "ID_Usuario") != id_usuario:
-            continue
-        ids_plantilla[db.valor(ws_c, r, "ID_Categoria")] = db.agregar(ws_pc, {
-            "Nombre_Categoria": db.valor(ws_c, r, "Nombre_Categoria"),
-            "Tipo_Movimiento": db.valor(ws_c, r, "Tipo_Movimiento"),
-        })
-    creadas = 0
-    for r in _filas(ws_s):
-        id_cat = ids_plantilla.get(db.valor(ws_s, r, "ID_Categoria"))
-        if db.valor(ws_s, r, "ID_Usuario") != id_usuario or id_cat is None:
-            continue
-        db.agregar(ws_ps, {"ID_Categoria": id_cat, "Nombre_Subcategoria": db.valor(ws_s, r, "Nombre_Subcategoria")})
-        creadas += 1
-    return len(ids_plantilla), creadas
+
+def aplicar_plantilla(id_usuario: str) -> tuple[int, int]:
+    """Copia la plantilla a las categorías del usuario. Devuelve (categorías, subcategorías) creadas.
+    Dos inserciones en bloque (categorías y luego subcategorías) en vez de una por fila."""
+    categorias = supabase.table("categorias").insert([
+        {"id_usuario": id_usuario, "nombre_categoria": nombre, "tipo_movimiento": tipo}
+        for nombre, tipo, _ in PLANTILLA
+    ]).execute().data
+
+    id_por_nombre = {c["nombre_categoria"]: c["id_categoria"] for c in categorias}
+    subcategorias = [
+        {"id_usuario": id_usuario, "id_categoria": id_por_nombre[nombre], "nombre_subcategoria": sub}
+        for nombre, _, subs in PLANTILLA for sub in subs
+    ]
+    supabase.table("subcategorias").insert(subcategorias).execute()
+    return len(categorias), len(subcategorias)

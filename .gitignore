@@ -12,3 +12,5 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+# Respaldos de la base de datos (contienen datos personales)
+respaldos_supabase/

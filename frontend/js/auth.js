@@ -87,6 +87,13 @@ document.getElementById('form-registro').addEventListener('submit', async (e) =>
     await enviando(e.target, async () => {
         try {
             const data = await api("/auth/registro", { method: "POST", body });
+            if (data.requiere_confirmacion || !data.token) {
+                // Supabase pide confirmar el correo antes de poder entrar
+                document.getElementById('form-registro').reset();
+                cambiarTab('login');
+                document.getElementById('log_email').value = body.email;
+                return mostrarError(data.mensaje || "Revisa tu correo para confirmar la cuenta y luego inicia sesión.");
+            }
             iniciarSesionLocal(data.usuario, data.token, true);
         } catch (err) {
             mostrarError(err.message);
