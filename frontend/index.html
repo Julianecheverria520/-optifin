@@ -3,6 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- App instalable (PWA) -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#111c43">
+    <link rel="icon" type="image/png" href="iconos/favicon-32.png">
+    <link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="OptiFin">
     <title>OptiFin - Movimientos</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -32,8 +40,13 @@
                 <!-- Columna Izquierda: Formulario -->
                 <div class="xl:col-span-7 bg-white p-8 rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] border border-gray-100">
                     <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
-                        <span class="text-gray-400">←</span> Nuevo Movimiento
+                        <span class="text-gray-400">←</span> <span id="titulo_form_mov">Nuevo Movimiento</span>
                     </h3>
+                    <!-- Aviso de edición (se muestra al pulsar "Editar" en un movimiento) -->
+                    <div id="aviso_edicion" class="hidden mb-6 rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 flex flex-wrap items-center justify-between gap-2">
+                        <span id="aviso_edicion_texto">Estás editando un movimiento.</span>
+                        <button type="button" id="btn_cancelar_edicion" class="font-bold text-amber-900 underline">Cancelar edición</button>
+                    </div>
                     
                     <form id="transaccionForm" class="space-y-6">
                         <!-- Botones Toggle (Gasto / Ingreso / Traslado) -->
@@ -143,7 +156,7 @@
 
                         <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-600/30 transition-all duration-200 flex justify-center items-center gap-2">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-                            Registrar Movimiento
+                            <span id="texto_btn_guardar">Registrar Movimiento</span>
                         </button>
                     </form>
                 </div>
@@ -161,7 +174,10 @@
 
             <!-- Tabla abajo -->
             <div class="mt-8 bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-                <h3 class="text-lg font-bold text-gray-800 mb-4">Últimos Movimientos</h3>
+                <div class="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+                    <h3 class="text-lg font-bold text-gray-800">Últimos Movimientos</h3>
+                    <p class="text-xs text-gray-400">Los anulados se ven tachados y no cuentan en tus saldos.</p>
+                </div>
                 <div class="overflow-x-auto">
                     <table class="min-w-full table-auto">
                         <thead>
@@ -177,11 +193,15 @@
                         <tbody id="tablaResultados" class="text-gray-700 text-sm font-medium"></tbody>
                     </table>
                 </div>
+                <div class="mt-4 text-center">
+                    <button type="button" id="btn_ver_mas" class="hidden text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg">Ver 10 más</button>
+                </div>
             </div>
         </div>
     </main>
 
     <script src="js/config.js"></script>
+    <script src="js/pwa.js"></script>
     <script src="js/sidebar.js"></script>
     <script>cargarSidebar('transacciones');</script>
     <script src="js/transacciones.js"></script>

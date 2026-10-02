@@ -14,3 +14,6 @@ venv/
 .venv/
 # Respaldos de la base de datos (contienen datos personales)
 respaldos_supabase/
+
+# Script de migración de un solo uso (contiene el UUID del usuario)
+migrar_datos.py

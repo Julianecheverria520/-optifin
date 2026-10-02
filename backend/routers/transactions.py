@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend import finanzas, usuarios
 from backend.database import supabase
@@ -67,11 +69,18 @@ def _fila(trans: Transaccion) -> dict:
 
 
 @router.get("/")
-def obtener_transacciones(uid: str = Depends(usuario_actual)):
-    """Mis movimientos + mi parte de los gastos que otros usuarios compartieron conmigo (solo lectura)."""
-    propias = supabase.table("transacciones").select("*").eq("id_usuario", uid).order("fecha", desc=True).execute().data or []
-    compartido = finanzas.compartido_por_transaccion(uid)
-    pagado_por = finanzas.pagado_por_transaccion(uid)
+def obtener_transacciones(desde: int = Query(0, ge=0), limite: int = Query(10, ge=1, le=100),
+                          uid: str = Depends(usuario_actual)):
+    """Página de movimientos, del más reciente al más antiguo: los míos (incluidos los anulados, que se
+    muestran tachados) + mi parte de los gastos que otros usuarios compartieron conmigo (solo lectura)."""
+    hasta = desde + limite
+    # Se piden hasta `hasta` movimientos propios (+1 para saber si hay más) y se mezclan con los compartidos
+    propias = (supabase.table("transacciones").select("*").eq("id_usuario", uid)
+               .order("fecha", desc=True).order("id_transaccion", desc=True)
+               .range(0, hasta).execute().data or [])
+    datos = finanzas.Datos(uid).precargar("deudas_propias", "deudas_ajenas", "subcategorias")
+    compartido = finanzas.compartido_por_transaccion(datos)
+    pagado_por = finanzas.pagado_por_transaccion(datos)
 
     def al_frontend(t, **extra):
         return {
@@ -83,13 +92,16 @@ def obtener_transacciones(uid: str = Depends(usuario_actual)):
             "ID_Cuenta_Destino": t.get("id_cuenta_destino"),
             "Monto": float(t.get("monto") or 0),
             "Descripcion": t.get("descripcion") or "",
+            "Anulada": bool(t.get("anulada")),
             **extra,
         }
 
-    return ([al_frontend(t, Monto_Compartido=compartido.get(t["id_transaccion"], 0.0),
-                         Pagado_Por=pagado_por.get(t["id_transaccion"]), Solo_Lectura=False) for t in propias]
-            + [al_frontend(t, Monto_Compartido=0.0, Pagado_Por=None, Compartido_Por=t["compartido_por"], Solo_Lectura=True)
-               for t in finanzas.gastos_compartidos_conmigo(uid)])
+    todos = ([al_frontend(t, Monto_Compartido=compartido.get(t["id_transaccion"], 0.0),
+                          Pagado_Por=pagado_por.get(t["id_transaccion"]), Solo_Lectura=False) for t in propias]
+             + [al_frontend(t, Monto_Compartido=0.0, Pagado_Por=None, Compartido_Por=t["compartido_por"], Solo_Lectura=True)
+                for t in finanzas.gastos_compartidos_conmigo(datos)])
+    todos.sort(key=lambda m: (str(m["Fecha"]), m["ID_Transaccion"]), reverse=True)
+    return {"movimientos": todos[desde:hasta], "hay_mas": len(todos) > hasta}
 
 
 @router.post("/")
@@ -118,14 +130,12 @@ def crear_transaccion(trans: Transaccion, uid: str = Depends(usuario_actual)):
 @router.put("/{id_transaccion}")
 def editar_transaccion(id_transaccion: int, trans: Transaccion, uid: str = Depends(usuario_actual)):
     """Edita los datos del movimiento. Las partes de un gasto compartido se gestionan desde Deudas."""
-    existe = supabase.table("transacciones").select("id_transaccion").eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute()
-    if not existe.data:
-        raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    _movimiento_propio(id_transaccion, uid, activo=True)
     _validar_referencias(trans, uid)
 
     ligadas = supabase.table("deudas").select("*").eq("id_transaccion_origen", id_transaccion).eq("id_usuario", uid).execute().data or []
     if any(d["tipo_deuda"] == "Le debo" for d in ligadas):
-        raise HTTPException(status_code=400, detail="Este gasto lo pagó otra persona: para cambiarlo, elimínalo y regístralo de nuevo")
+        raise HTTPException(status_code=400, detail="Este gasto lo pagó otra persona: para cambiarlo, anúlalo y regístralo de nuevo")
     compartido = sum(float(d["monto"]) for d in ligadas)
     if compartido and trans.tipo_movimiento != "Gasto":
         raise HTTPException(status_code=400, detail="Este gasto es compartido: no puede cambiar de tipo")
@@ -133,19 +143,45 @@ def editar_transaccion(id_transaccion: int, trans: Transaccion, uid: str = Depen
         raise HTTPException(status_code=400, detail="El monto no puede ser menor a lo que te deben por este gasto")
 
     supabase.table("transacciones").update(_fila(trans)).eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute()
-    return {"mensaje": "Transacción actualizada"}
+    if ligadas:  # las deudas de un gasto compartido siguen la fecha y la nota del gasto
+        (supabase.table("deudas").update({"fecha_creacion": trans.fecha.isoformat(), "descripcion": trans.descripcion or None})
+         .eq("id_transaccion_origen", id_transaccion).eq("id_usuario", uid).execute())
+    return {"mensaje": "Movimiento actualizado"}
 
 
-@router.delete("/{id_transaccion}")
-def eliminar_transaccion(id_transaccion: int, uid: str = Depends(usuario_actual)):
-    """Elimina el movimiento y, si era compartido, las deudas que generó con sus abonos."""
-    existe = supabase.table("transacciones").select("id_transaccion").eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute()
-    if not existe.data:
+def _movimiento_propio(id_transaccion: int, uid: str, activo: bool | None = None) -> dict:
+    """El movimiento si es del usuario; activo=True exige que no esté anulado y False que sí lo esté."""
+    res = supabase.table("transacciones").select("*").eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute().data
+    if not res:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    if activo is True and res[0].get("anulada"):
+        raise HTTPException(status_code=409, detail="El movimiento está anulado: restáuralo primero para modificarlo")
+    if activo is False and not res[0].get("anulada"):
+        raise HTTPException(status_code=409, detail="El movimiento no está anulado")
+    return res[0]
+
+
+@router.post("/{id_transaccion}/anular")
+def anular_transaccion(id_transaccion: int, uid: str = Depends(usuario_actual)):
+    """Anula el movimiento: se conserva (visible y tachado) pero deja de contar en saldos y resúmenes.
+    Si era un gasto compartido, sus deudas se anulan con él (salvo que ya tengan abonos)."""
+    _movimiento_propio(id_transaccion, uid, activo=True)
     ids_deudas = [d["id_deuda"] for d in supabase.table("deudas").select("id_deuda")
                   .eq("id_transaccion_origen", id_transaccion).eq("id_usuario", uid).execute().data or []]
+    if ids_deudas and supabase.table("abonos").select("id_abono").in_("id_deuda", ids_deudas).limit(1).execute().data:
+        raise HTTPException(status_code=409, detail="No se puede anular: las deudas de este gasto ya tienen abonos o cruces. Elimina esos abonos primero.")
+    (supabase.table("transacciones").update({"anulada": True, "anulada_en": datetime.now(timezone.utc).isoformat()})
+     .eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute())
     if ids_deudas:
-        supabase.table("abonos").delete().in_("id_deuda", ids_deudas).execute()
-        supabase.table("deudas").delete().in_("id_deuda", ids_deudas).execute()
-    supabase.table("transacciones").delete().eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute()
-    return {"mensaje": "Transacción eliminada"}
+        supabase.table("deudas").update({"anulada": True}).in_("id_deuda", ids_deudas).execute()
+    return {"mensaje": "Movimiento anulado"}
+
+
+@router.post("/{id_transaccion}/restaurar")
+def restaurar_transaccion(id_transaccion: int, uid: str = Depends(usuario_actual)):
+    """Deshace la anulación (y la de sus deudas si era un gasto compartido)."""
+    _movimiento_propio(id_transaccion, uid, activo=False)
+    (supabase.table("transacciones").update({"anulada": False, "anulada_en": None})
+     .eq("id_transaccion", id_transaccion).eq("id_usuario", uid).execute())
+    supabase.table("deudas").update({"anulada": False}).eq("id_transaccion_origen", id_transaccion).eq("id_usuario", uid).execute()
+    return {"mensaje": "Movimiento restaurado"}

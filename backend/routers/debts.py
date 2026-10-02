@@ -23,8 +23,9 @@ def actualizar_estado(id_deuda: int):
 
 
 def _deuda_propia(id_deuda: int, uid: str) -> dict:
-    """La deuda si la registró este usuario; si no (o si la registró la otra persona), 404."""
-    d = supabase.table("deudas").select("*").eq("id_deuda", id_deuda).eq("id_usuario", uid).execute().data
+    """La deuda activa si la registró este usuario; si no (la registró la otra persona o está anulada), 404."""
+    # Las deudas anuladas (por anular su gasto) no se modifican: se restauran restaurando el gasto
+    d = supabase.table("deudas").select("*").eq("id_deuda", id_deuda).eq("id_usuario", uid).eq("anulada", False).execute().data
     if not d:
         raise HTTPException(status_code=404, detail="Deuda no encontrada")
     return d[0]

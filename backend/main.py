@@ -1,7 +1,10 @@
 import logging
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -12,6 +15,8 @@ logger = logging.getLogger("optifin")
 # Las librerías HTTP registran cada petición a Supabase: solo interesan sus advertencias y errores
 for ruidoso in ("httpx", "httpx2", "httpcore", "hpack"):
     logging.getLogger(ruidoso).setLevel(logging.WARNING)
+
+CARPETA_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(title="OptiFin API")
 
@@ -29,15 +34,19 @@ def salud():
     """Para el health check de Render: responde sin tocar la base de datos."""
     return {"estado": "ok"}
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-# 1. Primero cargamos las rutas de tu API (el cerebro)
+# Respuestas comprimidas (el JSON del Resumen y los scripts pesan mucho menos)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# CORS: la app y la API se sirven desde el mismo dominio, así que no hace falta permitir otros
+# orígenes. Solo si algún día el frontend vive en otro dominio, se listan en CORS_ORIGINS
+# (separados por coma) en las variables de entorno de Render.
+origenes = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+if origenes:
+    app.add_middleware(CORSMiddleware, allow_origins=origenes, allow_credentials=False,
+                       allow_methods=["*"], allow_headers=["Authorization", "Content-Type"])
+
+# 1. Primero las rutas de la API
 app.include_router(transactions.router)
 app.include_router(debts.router)
 app.include_router(categories.router)
@@ -47,6 +56,5 @@ app.include_router(auth.router)
 app.include_router(planning.router)
 app.include_router(dashboard.router)
 
-# 2. Al final, montamos la interfaz visual. 
-# Esto convierte la carpeta "frontend" en la cara pública de tu app.
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+# 2. Al final, la interfaz: la carpeta "frontend" es la cara pública de la app
+app.mount("/", StaticFiles(directory=CARPETA_FRONTEND, html=True), name="frontend")

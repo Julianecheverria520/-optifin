@@ -1,0 +1,22 @@
+# Configuración del servicio en Render (Infraestructura como código).
+# El servicio actual se creó desde el panel: este archivo documenta su configuración y solo se
+# aplica si se conecta el repositorio como "Blueprint" (Render -> New -> Blueprint).
+# Las claves NUNCA van aquí: se definen en el panel (Environment) y quedan marcadas con sync: false.
+services:
+  - type: web
+    name: optifin
+    runtime: python
+    plan: free
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /salud
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY      # clave secret (sb_secret_...): solo en el servidor
+        sync: false
+      # Opcional: dominios externos que pueden llamar a la API (separados por coma)
+      - key: CORS_ORIGINS
+        sync: false

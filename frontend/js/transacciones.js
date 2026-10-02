@@ -320,27 +320,42 @@ function nombreCuenta(id) {
     return c ? c.nombre : "?";
 }
 
-async function cargarTransacciones() {
+// ---------- Lista de movimientos (paginada de 10 en 10) ----------
+
+const TAMANO_PAGINA = 10;
+let movimientosCargados = [];
+let hayMasMovimientos = false;
+let idEditando = null;
+
+// reiniciar=true vuelve a la primera página (tras guardar, editar o anular); false agrega la siguiente
+async function cargarTransacciones(reiniciar = true) {
+    const desde = reiniciar ? 0 : movimientosCargados.length;
+    // Al recargar se conserva cuántos había a la vista (si el usuario ya había pedido "ver más")
+    const limite = reiniciar ? Math.max(TAMANO_PAGINA, movimientosCargados.length) : TAMANO_PAGINA;
     let datos;
     try {
-        datos = await api(RUTA_TRANS);
+        datos = await api(`${RUTA_TRANS}?desde=${desde}&limite=${limite}`);
     } catch (err) {
         return alert(err.message);
     }
+    movimientosCargados = reiniciar ? datos.movimientos : movimientosCargados.concat(datos.movimientos);
+    hayMasMovimientos = datos.hay_mas;
+    dibujarMovimientos();
+}
 
+function dibujarMovimientos() {
+    document.getElementById('btn_ver_mas').classList.toggle('hidden', !hayMasMovimientos);
     const tbody = document.getElementById('tablaResultados');
-    if (datos.length === 0) {
+    if (movimientosCargados.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-400 italic">Aún no hay movimientos.</td></tr>';
         return;
     }
 
-    // Más recientes primero (por fecha y, dentro del mismo día, por orden de registro)
-    datos.sort((a, b) => String(b.Fecha ?? '').localeCompare(String(a.Fecha ?? '')) || b.ID_Transaccion - a.ID_Transaccion);
-
-    tbody.innerHTML = datos.map(t => {
+    tbody.innerHTML = movimientosCargados.map(t => {
         let badge = `<span class="bg-blue-100 text-blue-700 py-1 px-3 rounded-md text-xs font-bold">Traslado</span>`;
         if (t.Tipo_Movimiento === 'Ingreso') badge = `<span class="bg-green-100 text-green-700 py-1 px-3 rounded-md text-xs font-bold">Ingreso</span>`;
         if (t.Tipo_Movimiento === 'Gasto') badge = `<span class="bg-red-100 text-red-700 py-1 px-3 rounded-md text-xs font-bold">Gasto</span>`;
+        if (t.Anulada) badge = `<span class="bg-gray-200 text-gray-600 py-1 px-3 rounded-md text-xs font-bold">Anulado</span>`;
 
         // Concepto: subcategoría para gastos/ingresos, cuentas para traslados
         let concepto = "-";
@@ -351,44 +366,118 @@ async function cargarTransacciones() {
             concepto = sub ? sub.Nombre_Subcategoria : "Desconocido";
         }
 
+        let acciones;
+        if (t.Solo_Lectura) {
+            acciones = '<span class="text-xs text-gray-400" title="Lo registró la otra persona; si hay un error, debe corregirlo ella">Solo lectura</span>';
+        } else if (t.Anulada) {
+            acciones = `<button type="button" onclick="restaurarTransaccion(${t.ID_Transaccion})" class="text-blue-600 hover:text-blue-800 text-xs font-bold">Restaurar</button>`;
+        } else {
+            acciones = `<button type="button" onclick="editarTransaccion(${t.ID_Transaccion})" class="text-blue-600 hover:text-blue-800 text-xs font-bold">Editar</button>
+                        <button type="button" onclick="anularTransaccion(${t.ID_Transaccion})" class="text-red-500 hover:text-red-700 text-xs font-bold ml-3">Anular</button>`;
+        }
+        const tachado = t.Anulada ? 'line-through text-gray-400' : '';
+
         return `
-        <tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
-            <td class="py-4 px-4 text-left whitespace-nowrap">${esc(String(t.Fecha ?? '').slice(0, 10))}</td>
+        <tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors ${t.Anulada ? 'bg-gray-50' : ''} ${t.ID_Transaccion === idEditando ? 'ring-2 ring-amber-300' : ''}">
+            <td class="py-4 px-4 text-left whitespace-nowrap ${tachado}">${esc(String(t.Fecha ?? '').slice(0, 10))}</td>
             <td class="py-4 px-4 text-left">${badge}</td>
-            <td class="py-4 px-4 text-left text-gray-600">${esc(concepto)}</td>
+            <td class="py-4 px-4 text-left text-gray-600 ${tachado}">${esc(concepto)}</td>
             <td class="py-4 px-4 text-right font-bold text-gray-800">
-                ${formatoMoneda(t.Monto)}
+                <span class="${tachado}">${formatoMoneda(t.Monto)}</span>
                 ${t.Monto_Compartido > 0 ? `<span class="block text-xs font-normal text-gray-400">Compartido · tu parte ${formatoMoneda(t.Monto - t.Monto_Compartido)}</span>` : ''}
                 ${t.Pagado_Por ? `<span class="block text-xs font-normal text-gray-400">Lo pagó ${esc(t.Pagado_Por)} · le debes</span>` : ''}
                 ${t.Compartido_Por ? `<span class="block text-xs font-normal text-gray-400">Lo pagó ${esc(t.Compartido_Por)} y lo compartió contigo · tu parte</span>` : ''}
             </td>
-            <td class="py-4 px-4 text-left text-gray-500 text-sm truncate max-w-[200px]">${esc(t.Descripcion)}</td>
-            <td class="py-4 px-4 text-right">
-                ${t.Solo_Lectura
-                    ? '<span class="text-xs text-gray-400" title="Lo registró la otra persona; si hay un error, debe corregirlo ella">Solo lectura</span>'
-                    : `<button type="button" onclick="eliminarTransaccion(${t.ID_Transaccion})" class="text-red-500 hover:text-red-700 text-xs font-bold">Eliminar</button>`}
-            </td>
+            <td class="py-4 px-4 text-left text-gray-500 text-sm truncate max-w-[200px] ${tachado}">${esc(t.Descripcion)}</td>
+            <td class="py-4 px-4 text-right whitespace-nowrap">${acciones}</td>
         </tr>`;
     }).join('');
 }
 
-window.eliminarTransaccion = async function(id) {
-    const aviso = "¿Eliminar este movimiento? El saldo de las cuentas se recalculará." +
-        "\nSi es un gasto compartido, también se eliminarán las deudas que generó y sus abonos.";
+document.getElementById('btn_ver_mas').addEventListener('click', () => cargarTransacciones(false));
+
+window.anularTransaccion = async function(id) {
+    const t = movimientosCargados.find(m => m.ID_Transaccion === id);
+    const aviso = "¿Anular este movimiento? Seguirá visible (tachado) pero dejará de contar en tus saldos y resúmenes." +
+        (t && t.Monto_Compartido > 0 ? "\nComo es un gasto compartido, también se anularán las deudas que generó." : "") +
+        "\nPuedes restaurarlo después.";
     if (!confirm(aviso)) return;
     try {
-        await api(`${RUTA_TRANS}${id}`, { method: "DELETE" });
+        await api(`${RUTA_TRANS}${id}/anular`, { method: "POST" });
+        if (idEditando === id) salirDeEdicion();
         refrescarCuentasYMovimientos();
     } catch (err) {
         alert(err.message);
     }
 }
 
+window.restaurarTransaccion = async function(id) {
+    try {
+        await api(`${RUTA_TRANS}${id}/restaurar`, { method: "POST" });
+        refrescarCuentasYMovimientos();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+// ---------- Edición ----------
+
+window.editarTransaccion = function(id) {
+    const t = movimientosCargados.find(m => m.ID_Transaccion === id);
+    if (!t) return;
+    if (t.Pagado_Por) {
+        return alert(`Este gasto lo pagó ${t.Pagado_Por}: para cambiarlo, anúlalo y regístralo de nuevo.`);
+    }
+    idEditando = id;
+
+    // Tipo, categoría y subcategoría
+    const sub = todasLasSubcategorias.find(s => s.ID_Subcategoria === t.ID_Subcategoria);
+    if (sub) categoriaSeleccionada = sub.ID_Categoria;
+    cambiarQuienPago(false);
+    cambiarTipo(t.Tipo_Movimiento);
+    if (sub) document.getElementById('id_subcategoria').value = t.ID_Subcategoria;
+
+    // Cuentas, monto, nota y fecha
+    if (t.ID_Cuenta_Origen) document.getElementById('id_cuenta_origen').value = t.ID_Cuenta_Origen;
+    if (t.ID_Cuenta_Destino) document.getElementById('id_cuenta_destino').value = t.ID_Cuenta_Destino;
+    document.getElementById('monto').value = t.Monto;
+    document.getElementById('descripcion').value = t.Descripcion || '';
+    document.getElementById('fecha').value = String(t.Fecha).slice(0, 10);
+
+    // En edición no se cambia quién pagó ni con quién se comparte (las partes se ajustan en Deudas)
+    document.getElementById('box_quien_pago').classList.add('hidden');
+    document.getElementById('box_compartido').classList.add('hidden');
+    reiniciarCompartido();
+
+    document.getElementById('titulo_form_mov').innerText = 'Editar Movimiento';
+    document.getElementById('texto_btn_guardar').innerText = 'Guardar cambios';
+    document.getElementById('aviso_edicion_texto').innerText = t.Monto_Compartido > 0
+        ? `Editando un gasto compartido: el monto no puede ser menor a lo que te deben (${formatoMoneda(t.Monto_Compartido)}).`
+        : 'Estás editando un movimiento.';
+    document.getElementById('aviso_edicion').classList.remove('hidden');
+    dibujarMovimientos();
+    document.getElementById('transaccionForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function salirDeEdicion() {
+    idEditando = null;
+    document.getElementById('titulo_form_mov').innerText = 'Nuevo Movimiento';
+    document.getElementById('texto_btn_guardar').innerText = 'Registrar Movimiento';
+    document.getElementById('aviso_edicion').classList.add('hidden');
+    document.getElementById('monto').value = '';
+    document.getElementById('descripcion').value = '';
+    document.getElementById('fecha').value = fechaHoyISO();
+    cambiarTipo(document.getElementById('tipo').value);  // vuelve a mostrar "¿Quién pagó?" y el compartido
+    dibujarMovimientos();
+}
+
+document.getElementById('btn_cancelar_edicion').addEventListener('click', salirDeEdicion);
+
 document.getElementById('transaccionForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const tipo = document.getElementById('tipo').value;
-    const pagadoPor = tipo === 'Gasto' && pagoOtraPersona ? document.getElementById('pagado_por').value.trim() : null;
+    const pagadoPor = idEditando === null && tipo === 'Gasto' && pagoOtraPersona ? document.getElementById('pagado_por').value.trim() : null;
     if (tipo === 'Gasto' && pagoOtraPersona && !pagadoPor) return alert("Escribe quién pagó el gasto.");
     // Un gasto que pagó otra persona no usa cuentas
     if (!pagadoPor && todasLasCuentas.length === 0) return alert("Primero crea al menos una cuenta en la sección Cuentas.");
@@ -415,7 +504,7 @@ document.getElementById('transaccionForm').addEventListener('submit', async (e) 
 
     let compartido;
     try {
-        compartido = tipo === 'Gasto' && !pagadoPor ? leerCompartido() : [];
+        compartido = idEditando === null && tipo === 'Gasto' && !pagadoPor ? leerCompartido() : [];
     } catch (err) {
         return alert(err.message);
     }
@@ -433,6 +522,11 @@ document.getElementById('transaccionForm').addEventListener('submit', async (e) 
     };
 
     try {
+        if (idEditando !== null) {
+            await api(`${RUTA_TRANS}${idEditando}`, { method: "PUT", body: { ...t, compartido: [], pagado_por: null } });
+            salirDeEdicion();
+            return refrescarCuentasYMovimientos();
+        }
         await api(RUTA_TRANS, { method: "POST", body: t });
     } catch (err) {
         return alert(err.message);

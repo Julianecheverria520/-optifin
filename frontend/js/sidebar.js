@@ -60,6 +60,11 @@ function cargarSidebar(paginaActiva) {
                 <button type="button" onclick="alternarMenu(false)" class="md:hidden text-gray-400 hover:text-white text-2xl leading-none" aria-label="Cerrar menú">×</button>
             </div>
             <nav class="flex-1 px-4 space-y-1">${enlaces}</nav>
+            <div class="px-4 pt-4">
+                <button type="button" onclick="instalarApp()" class="boton-instalar hidden w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-sm font-bold">
+                    ${icono('M12 4v12m0 0l-4-4m4 4l4-4M4 20h16')} Instalar app
+                </button>
+            </div>
             <div class="p-4 mb-2">
                 <div class="flex items-center gap-3 p-3 rounded-xl bg-[#0d1636]">
                     <div class="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center font-bold text-white shadow shrink-0">${esc(nombre.charAt(0).toUpperCase())}</div>
@@ -73,6 +78,8 @@ function cargarSidebar(paginaActiva) {
                 </div>
             </div>
         </div>`;
+
+    if (window.mostrarBotonesInstalar) mostrarBotonesInstalar();
 
     // Barra superior (solo celular), fondo oscuro del cajón y estilos móviles: una sola vez por página
     if (!document.getElementById('barra-movil')) {

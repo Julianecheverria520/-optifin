@@ -3,6 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- App instalable (PWA) -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#111c43">
+    <link rel="icon" type="image/png" href="iconos/favicon-32.png">
+    <link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="OptiFin">
     <title>OptiFin - Iniciar Sesión</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -72,11 +80,16 @@
             </form>
 
             <div id="error_msg" class="hidden mt-6 bg-red-50 text-red-600 border border-red-200 p-3 rounded-lg text-sm font-semibold text-center"></div>
+
+            <button type="button" onclick="instalarApp()" class="boton-instalar hidden mt-6 w-full flex items-center justify-center gap-3 py-3 rounded-xl border-2 border-[#111c43] text-[#111c43] font-bold hover:bg-gray-50">
+                <img src="iconos/icono-192.png" alt="" class="w-7 h-7 rounded-lg"> Instalar OptiFin en este dispositivo
+            </button>
         </div>
     </div>
 
     <!-- Scripts -->
     <script src="js/config.js"></script>
+    <script src="js/pwa.js"></script>
     <script src="js/auth.js"></script>
 </body>
 </html>

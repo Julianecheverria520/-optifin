@@ -1,17 +1,22 @@
 from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
+
 from backend import finanzas
 from backend.seguridad import usuario_actual
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
+
 @router.get("/resumen/{mes}/{anio}")
 def obtener_resumen(mes: int, anio: int, uid: str = Depends(usuario_actual)):
     if not 1 <= mes <= 12:
         raise HTTPException(status_code=400, detail="El mes debe estar entre 1 y 12")
-    
-    resumen = finanzas.resumen_mes(mes, anio, uid)
-    patrimonio = finanzas.patrimonio(uid)
+
+    # Todas las tablas del usuario se consultan una vez y en paralelo; los tres cálculos las comparten
+    datos = finanzas.Datos(uid).precargar()
+    resumen = finanzas.resumen_mes(mes, anio, datos)
+    patrimonio = finanzas.patrimonio(datos)
 
     hoy = date.today()
     p = resumen["proyeccion"]
@@ -22,5 +27,5 @@ def obtener_resumen(mes: int, anio: int, uid: str = Depends(usuario_actual)):
     return {
         **resumen,
         "patrimonio": patrimonio,
-        "deudas_por_persona": finanzas.deudas_por_persona(uid),
+        "deudas_por_persona": finanzas.deudas_por_persona(datos),
     }

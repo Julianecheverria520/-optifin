@@ -1,14 +1,19 @@
 """Cálculos financieros por usuario sobre Supabase: saldos de cuentas, deudas y resumen mensual.
 
-Cada función recibe el ID del usuario (UUID de Supabase Auth) y usa sus datos, más:
+Cada cálculo usa los datos del usuario (UUID de Supabase Auth), más:
 - las deudas que otro usuario de OptiFin registró con él, vistas desde su lado
   (si Julián registró "OptiCore me debe", OptiCore ve "Le debo a Julián", en solo lectura);
 - su parte de los gastos que otro usuario pagó y compartió con él (cuenta como gasto suyo).
 
-Como el backend usa la clave del servidor (sin RLS), TODA consulta debe filtrar por usuario.
+Los movimientos y deudas ANULADOS no cuentan en ningún cálculo.
+
+Rendimiento: `Datos` carga cada tabla UNA vez por petición y en paralelo (antes el Resumen hacía
+16 consultas seguidas). Las funciones aceptan el ID del usuario o un `Datos` ya cargado.
+Como el backend usa la clave del servidor (sin RLS), TODA consulta filtra por usuario.
 """
 import calendar
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
 from backend import usuarios
@@ -24,6 +29,63 @@ def _fetch(tabla: str, id_usuario: str | None = None, **filtros) -> list[dict]:
     for columna, valor in filtros.items():
         consulta = consulta.in_(columna, list(valor)) if isinstance(valor, (list, set, tuple)) else consulta.eq(columna, valor)
     return consulta.execute().data or []
+
+
+class Datos:
+    """Datos de un usuario para los cálculos de UNA petición: cada tabla se consulta una sola vez."""
+
+    def __init__(self, id_usuario: str):
+        self.uid = id_usuario
+        self._cache = {}
+        uid = id_usuario
+        self._cargadores = {
+            "cuentas": lambda: _fetch("cuentas", uid),
+            "transacciones": lambda: _fetch("transacciones", uid, anulada=False),
+            "deudas_propias": lambda: _fetch("deudas", uid, anulada=False),
+            "deudas_ajenas": lambda: (supabase.table("deudas").select("*").eq("id_usuario_contraparte", uid)
+                                      .neq("id_usuario", uid).eq("anulada", False).execute().data or []),
+            "subcategorias": lambda: _fetch("subcategorias", uid),
+            "planificacion": lambda: _fetch("planificacion", uid),
+            "ajustes": lambda: _fetch("ajustes_mes", uid),
+        }
+
+    def _cargar(self, nombre: str):
+        if nombre not in self._cache:
+            self._cache[nombre] = self._cargadores[nombre]()
+        return self._cache[nombre]
+
+    def precargar(self, *nombres: str) -> "Datos":
+        """Consulta en paralelo las tablas indicadas (todas si no se indica ninguna)."""
+        pendientes = [n for n in (nombres or self._cargadores) if n not in self._cache]
+        if pendientes:
+            with ThreadPoolExecutor(max_workers=len(pendientes)) as hilos:
+                for nombre, filas in zip(pendientes, hilos.map(lambda n: self._cargadores[n](), pendientes)):
+                    self._cache[nombre] = filas
+        return self
+
+    def __getattr__(self, nombre):
+        if nombre.startswith("_") or nombre not in self._cargadores:
+            raise AttributeError(nombre)
+        return self._cargar(nombre)
+
+    # Datos que dependen de otros (se calculan una vez)
+    @property
+    def nombres(self) -> dict:
+        if "nombres" not in self._cache:
+            self._cache["nombres"] = usuarios.nombres() if self.deudas_ajenas else {}
+        return self._cache["nombres"]
+
+    @property
+    def abonos(self) -> list[dict]:
+        """Abonos de las deudas visibles (propias y ajenas no anuladas)."""
+        if "abonos" not in self._cache:
+            ids = [d["id_deuda"] for d in self.deudas_propias + self.deudas_ajenas]
+            self._cache["abonos"] = _fetch("abonos", id_deuda=ids) if ids else []
+        return self._cache["abonos"]
+
+
+def _datos(usuario_o_datos) -> Datos:
+    return usuario_o_datos if isinstance(usuario_o_datos, Datos) else Datos(usuario_o_datos)
 
 
 def _int(valor, defecto=0):
@@ -57,48 +119,43 @@ def _invertir(tipo: str) -> str:
 
 # ---------- Deudas ----------
 
-def compartido_por_transaccion(id_usuario: str) -> dict:
+def compartido_por_transaccion(usuario) -> dict:
     """{id_transaccion: total que otros me deben de ese gasto compartido} (gastos del usuario)."""
     total = defaultdict(float)
-    for d in _fetch("deudas", id_usuario, tipo_deuda="Me debe"):
-        if d.get("id_transaccion_origen"):
+    for d in _datos(usuario).deudas_propias:
+        if d["tipo_deuda"] == "Me debe" and d.get("id_transaccion_origen"):
             total[d["id_transaccion_origen"]] += _monto(d)
     return dict(total)
 
 
-def pagado_por_transaccion(id_usuario: str) -> dict:
+def pagado_por_transaccion(usuario) -> dict:
     """{id_transaccion: persona que pagó ese gasto por mí}."""
-    return {d["id_transaccion_origen"]: d["persona"]
-            for d in _fetch("deudas", id_usuario, tipo_deuda="Le debo") if d.get("id_transaccion_origen")}
+    return {d["id_transaccion_origen"]: d["persona"] for d in _datos(usuario).deudas_propias
+            if d["tipo_deuda"] == "Le debo" and d.get("id_transaccion_origen")}
 
 
-def deudas_visibles(id_usuario: str) -> list[dict]:
+def deudas_visibles(usuario) -> list[dict]:
     """Mis deudas (es_propia=True) + las que otro usuario registró conmigo, vistas desde mi lado."""
-    propias = [{**d, "es_propia": True} for d in _fetch("deudas", id_usuario)]
-    ajenas = []
-    otras = supabase.table("deudas").select("*").eq("id_usuario_contraparte", id_usuario).neq("id_usuario", id_usuario).execute().data or []
-    if otras:
-        nombres = usuarios.nombres()
-        for d in otras:
-            ajenas.append({
-                **d,
-                "es_propia": False,
-                "tipo_deuda": _invertir(d["tipo_deuda"]),
-                "persona": nombres.get(d["id_usuario"], "Otro usuario"),
-                "id_usuario_contraparte": d["id_usuario"],
-                "id_cuenta": None,  # la cuenta es del otro usuario
-            })
+    datos = _datos(usuario)
+    propias = [{**d, "es_propia": True} for d in datos.deudas_propias]
+    ajenas = [{
+        **d,
+        "es_propia": False,
+        "tipo_deuda": _invertir(d["tipo_deuda"]),
+        "persona": datos.nombres.get(d["id_usuario"], "Otro usuario"),
+        "id_usuario_contraparte": d["id_usuario"],
+        "id_cuenta": None,  # la cuenta es del otro usuario
+    } for d in datos.deudas_ajenas]
     return propias + ajenas
 
 
-def deudas_con_saldo(id_usuario: str) -> list[dict]:
+def deudas_con_saldo(usuario) -> list[dict]:
     """Deudas visibles con lo abonado, el saldo pendiente y el estado calculado."""
-    visibles = deudas_visibles(id_usuario)
+    datos = _datos(usuario)
     abonado = defaultdict(float)
-    ids = [d["id_deuda"] for d in visibles]
-    if ids:
-        for a in _fetch("abonos", id_deuda=ids):
-            abonado[a["id_deuda"]] += _monto(a)
+    for a in datos.abonos:
+        abonado[a["id_deuda"]] += _monto(a)
+    visibles = deudas_visibles(datos)
     for d in visibles:
         pagado = abonado[d["id_deuda"]]
         saldo = max(_monto(d) - pagado, 0.0)
@@ -108,10 +165,10 @@ def deudas_con_saldo(id_usuario: str) -> list[dict]:
     return visibles
 
 
-def deudas_por_persona(id_usuario: str) -> list[dict]:
+def deudas_por_persona(usuario) -> list[dict]:
     """Saldo pendiente agrupado por persona (neto positivo = me debe)."""
     grupos = {}
-    for d in deudas_con_saldo(id_usuario):
+    for d in deudas_con_saldo(usuario):
         if d["saldo_pendiente"] <= 0.005:
             continue
         clave = str(d.get("persona")).strip().casefold()
@@ -127,49 +184,49 @@ def deudas_por_persona(id_usuario: str) -> list[dict]:
 
 # ---------- Gastos que otro usuario compartió conmigo ----------
 
-def gastos_compartidos_conmigo(id_usuario: str) -> list[dict]:
+def gastos_compartidos_conmigo(usuario) -> list[dict]:
     """Mi parte de los gastos que otro usuario pagó y compartió conmigo, como movimientos de solo
     lectura (sin cuenta: aún no he pagado, lo debo). La subcategoría se busca por nombre entre las mías.
     El id es negativo (-id_deuda) para no confundirlo con transacciones reales."""
-    deudas = (supabase.table("deudas").select("*").eq("id_usuario_contraparte", id_usuario)
-              .neq("id_usuario", id_usuario).eq("tipo_deuda", "Me debe").execute().data or [])
-    deudas = [d for d in deudas if d.get("id_transaccion_origen")]
-    if not deudas:
-        return []
-
-    transacciones = {t["id_transaccion"]: t for t in _fetch("transacciones", id_transaccion=[d["id_transaccion_origen"] for d in deudas])}
-    ids_sub = {t["id_subcategoria"] for t in transacciones.values() if t.get("id_subcategoria")}
-    nombre_sub = {s["id_subcategoria"]: s["nombre_subcategoria"] for s in _fetch("subcategorias", id_subcategoria=ids_sub)} if ids_sub else {}
-    mis_subs = {str(s["nombre_subcategoria"]).strip().casefold(): s["id_subcategoria"] for s in _fetch("subcategorias", id_usuario)}
-    nombres = usuarios.nombres()
-
+    datos = _datos(usuario)
+    if "compartidos" in datos._cache:
+        return datos._cache["compartidos"]
+    deudas = [d for d in datos.deudas_ajenas if d["tipo_deuda"] == "Me debe" and d.get("id_transaccion_origen")]
     resultado = []
-    for d in deudas:
-        t = transacciones.get(d["id_transaccion_origen"])
-        if not t:
-            continue
-        resultado.append({
-            "id_transaccion": -d["id_deuda"],
-            "id_usuario": id_usuario,
-            "fecha": t["fecha"],
-            "tipo_movimiento": "Gasto",
-            "id_subcategoria": mis_subs.get(str(nombre_sub.get(t.get("id_subcategoria"), "")).strip().casefold()),
-            "id_cuenta_origen": None,
-            "id_cuenta_destino": None,
-            "monto": _monto(d),
-            "descripcion": d.get("descripcion") or t.get("descripcion"),
-            "compartido_por": nombres.get(d["id_usuario"], "Otro usuario"),
-            "solo_lectura": True,
-        })
+    if deudas:
+        transacciones = {t["id_transaccion"]: t for t in _fetch("transacciones", anulada=False,
+                                                                id_transaccion=[d["id_transaccion_origen"] for d in deudas])}
+        ids_sub = {t["id_subcategoria"] for t in transacciones.values() if t.get("id_subcategoria")}
+        nombre_sub = {s["id_subcategoria"]: s["nombre_subcategoria"] for s in _fetch("subcategorias", id_subcategoria=ids_sub)} if ids_sub else {}
+        mis_subs = {str(s["nombre_subcategoria"]).strip().casefold(): s["id_subcategoria"] for s in datos.subcategorias}
+        for d in deudas:
+            t = transacciones.get(d["id_transaccion_origen"])
+            if not t:
+                continue
+            resultado.append({
+                "id_transaccion": -d["id_deuda"],
+                "id_usuario": datos.uid,
+                "fecha": t["fecha"],
+                "tipo_movimiento": "Gasto",
+                "id_subcategoria": mis_subs.get(str(nombre_sub.get(t.get("id_subcategoria"), "")).strip().casefold()),
+                "id_cuenta_origen": None,
+                "id_cuenta_destino": None,
+                "monto": _monto(d),
+                "descripcion": d.get("descripcion") or t.get("descripcion"),
+                "compartido_por": datos.nombres.get(d["id_usuario"], "Otro usuario"),
+                "solo_lectura": True,
+            })
+    datos._cache["compartidos"] = resultado
     return resultado
 
 
 # ---------- Cuentas ----------
 
-def saldos_cuentas(id_usuario: str) -> list[dict]:
+def saldos_cuentas(usuario) -> list[dict]:
     """Saldo actual = saldo inicial + ingresos - gastos ± traslados ± préstamos y abonos de deudas."""
+    datos = _datos(usuario).precargar("cuentas", "transacciones", "deudas_propias", "deudas_ajenas")
     movimiento = defaultdict(float)
-    for t in _fetch("transacciones", id_usuario):
+    for t in datos.transacciones:
         m, tipo = _monto(t), t.get("tipo_movimiento")
         if tipo == "Ingreso" and t.get("id_cuenta_destino"):
             movimiento[t["id_cuenta_destino"]] += m
@@ -182,15 +239,14 @@ def saldos_cuentas(id_usuario: str) -> list[dict]:
                 movimiento[t["id_cuenta_destino"]] += m
 
     # Préstamos con cuenta: si presté ("Me debe") salió dinero; si me prestaron ("Le debo") entró
-    deudas = _fetch("deudas", id_usuario)
-    tipo_deuda = {d["id_deuda"]: d["tipo_deuda"] for d in deudas}
-    for d in deudas:
+    tipo_deuda = {d["id_deuda"]: d["tipo_deuda"] for d in datos.deudas_propias}
+    for d in datos.deudas_propias:
         if d.get("id_cuenta"):
             movimiento[d["id_cuenta"]] += -_monto(d) if d["tipo_deuda"] == "Me debe" else _monto(d)
 
-    # Abonos con cuenta: si me pagan entra dinero; si yo pago sale
-    for a in _fetch("abonos", id_usuario):
-        if a.get("id_cuenta"):
+    # Abonos con cuenta (los registra el dueño de la deuda): si me pagan entra dinero; si yo pago sale
+    for a in datos.abonos:
+        if a.get("id_cuenta") and a["id_usuario"] == datos.uid:
             movimiento[a["id_cuenta"]] += _monto(a) if tipo_deuda.get(a["id_deuda"]) == "Me debe" else -_monto(a)
 
     return [{
@@ -199,7 +255,7 @@ def saldos_cuentas(id_usuario: str) -> list[dict]:
         "tipo": str(c.get("tipo_cuenta", "")),
         "saldo_inicial": _float(c.get("saldo_inicial")),
         "saldo_actual": _float(c.get("saldo_inicial")) + movimiento[c["id_cuenta"]],
-    } for c in sorted(_fetch("cuentas", id_usuario), key=lambda c: c["id_cuenta"])]
+    } for c in sorted(datos.cuentas, key=lambda c: c["id_cuenta"])]
 
 
 # ---------- Resumen mensual ----------
@@ -241,18 +297,19 @@ def vigente(p: dict, anio: int, mes: int) -> bool:
     return True
 
 
-def resumen_mes(mes: int, anio: int, id_usuario: str, hoy: date | None = None) -> dict:
+def resumen_mes(mes: int, anio: int, usuario, hoy: date | None = None) -> dict:
+    datos = _datos(usuario).precargar("transacciones", "deudas_propias", "deudas_ajenas",
+                                      "subcategorias", "planificacion", "ajustes")
     hoy = hoy or date.today()
     ultimo_dia = calendar.monthrange(anio, mes)[1]
 
-    subcategorias = {s["id_subcategoria"]: s["nombre_subcategoria"] for s in _fetch("subcategorias", id_usuario)}
-    plan = [p for p in _fetch("planificacion", id_usuario)
-            if str(p.get("activo")).lower() != "no" and vigente(p, anio, mes)]
+    subcategorias = {s["id_subcategoria"]: s["nombre_subcategoria"] for s in datos.subcategorias}
+    plan = [p for p in datos.planificacion if str(p.get("activo")).lower() != "no" and vigente(p, anio, mes)]
 
     # 1. Movimientos del mes: los míos + mi parte de gastos que otros usuarios compartieron conmigo
-    del_mes = [t for t in _fetch("transacciones", id_usuario) + gastos_compartidos_conmigo(id_usuario)
+    del_mes = [t for t in datos.transacciones + gastos_compartidos_conmigo(datos)
                if (f := _fecha(t.get("fecha"))) and f.month == mes and f.year == anio]
-    compartido = compartido_por_transaccion(id_usuario)
+    compartido = compartido_por_transaccion(datos)
 
     def propio(t):
         return _monto(t) - compartido.get(t["id_transaccion"], 0.0)
@@ -274,7 +331,7 @@ def resumen_mes(mes: int, anio: int, id_usuario: str, hoy: date | None = None) -
             propio_por_quincena[(*clave, 1 if _fecha(t["fecha"]).day <= 15 else 2)] += m
 
     # 2. Fijos. Valor del mes: el ajuste de ese mes si existe; si no, el de la planificación
-    ajustes = {a["id_planificacion"]: _monto(a) for a in _fetch("ajustes_mes", id_usuario, anio=anio, mes=mes)}
+    ajustes = {a["id_planificacion"]: _monto(a) for a in datos.ajustes if a["anio"] == anio and a["mes"] == mes}
 
     def valor_mes(p):
         return ajustes.get(p["id_registro"], _monto(p))
@@ -367,9 +424,10 @@ def resumen_mes(mes: int, anio: int, id_usuario: str, hoy: date | None = None) -
 
 # ---------- Patrimonio ----------
 
-def patrimonio(id_usuario: str) -> dict:
-    cuentas = saldos_cuentas(id_usuario)
-    deudas = [d for d in deudas_con_saldo(id_usuario) if d["saldo_pendiente"] > 0.005]
+def patrimonio(usuario) -> dict:
+    datos = _datos(usuario)
+    cuentas = saldos_cuentas(datos)
+    deudas = [d for d in deudas_con_saldo(datos) if d["saldo_pendiente"] > 0.005]
     en_cuentas = sum(c["saldo_actual"] for c in cuentas if c["tipo"] != "Crédito")
     tarjetas = sum(c["saldo_actual"] for c in cuentas if c["tipo"] == "Crédito")  # negativo = deuda
     me_deben = sum(d["saldo_pendiente"] for d in deudas if d["tipo_deuda"] == "Me debe")

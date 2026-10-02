@@ -3,6 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- App instalable (PWA) -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#111c43">
+    <link rel="icon" type="image/png" href="iconos/favicon-32.png">
+    <link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="OptiFin">
     <title>OptiFin - Configuración y Cuentas</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -60,6 +68,7 @@
     </main>
 
     <script src="js/config.js"></script>
+    <script src="js/pwa.js"></script>
     <script src="js/sidebar.js"></script>
     <script>cargarSidebar('configuracion');</script>
     <script src="js/cuentas.js"></script>
