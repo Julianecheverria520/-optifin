@@ -338,7 +338,10 @@ def resumen_mes(mes: int, anio: int, usuario, hoy: date | None = None) -> dict:
         if tipo in ("Ingreso", "Gasto"):
             clave = (tipo, t.get("id_subcategoria"))
             m = propio(t) if tipo == "Gasto" else _monto(t)
-            montos_por_clave[clave].append(m)
+            # Un fijo (factura) queda pagado con lo que salió de tu bolsillo, aunque lo compartas:
+            # si pagas la luz completa y alguien te debe la mitad, la factura igual está pagada.
+            # Los presupuestos, en cambio, miden solo tu parte.
+            montos_por_clave[clave].append(_monto(t))
             propio_por_sub[clave] += m
             propio_por_quincena[(*clave, 1 if _fecha(t["fecha"]).day <= 15 else 2)] += m
 

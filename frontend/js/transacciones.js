@@ -315,9 +315,37 @@ function filtrarSubcategorias() {
         : subsFiltradas.map(sub => `<option value="${sub.ID_Subcategoria}">${esc(sub.Nombre_Subcategoria)}</option>`).join('');
 }
 
-function nombreCuenta(id) {
-    const c = todasLasCuentas.find(x => x.id_cuenta === id);
-    return c ? c.nombre : "?";
+// ---------- Cuenta de cada movimiento (etiqueta visual) ----------
+
+// Cada cuenta conserva siempre el mismo color (según su orden de creación), y un ícono según su tipo
+const COLORES_CUENTA = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+const ICONOS_CUENTA = {
+    'Crédito': 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z',
+    'Efectivo': 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
+    'Billetera Digital': 'M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z',
+    'Débito': 'M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z',
+};
+
+function chipCuenta(id) {
+    const orden = [...todasLasCuentas].sort((a, b) => a.id_cuenta - b.id_cuenta);
+    const i = orden.findIndex(c => c.id_cuenta === id);
+    if (i < 0) return '<span class="text-xs text-gray-400">Cuenta eliminada</span>';
+    const c = orden[i];
+    const icono = ICONOS_CUENTA[c.tipo] || ICONOS_CUENTA['Débito'];
+    return `<span class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-gray-700 bg-gray-100 rounded-full pl-1.5 pr-2.5 py-1" title="${esc(c.tipo)}">
+        <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white shrink-0" style="background:${COLORES_CUENTA[i % COLORES_CUENTA.length]}">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${icono}"></path></svg>
+        </span>${esc(c.nombre)}</span>`;
+}
+
+// De qué cuenta salió (gasto), a cuál entró (ingreso) o ambas (traslado)
+function celdaCuenta(t) {
+    if (t.Compartido_Por) return `<span class="text-xs text-gray-400">Lo pagó ${esc(t.Compartido_Por)}</span>`;
+    if (t.Pagado_Por) return `<span class="text-xs text-gray-400">Lo pagó ${esc(t.Pagado_Por)}</span>`;
+    const flecha = '<span class="text-gray-400 mx-1">→</span>';
+    if (t.Tipo_Movimiento === 'Traslado') return `<span class="inline-flex items-center flex-wrap gap-y-1">${chipCuenta(t.ID_Cuenta_Origen)}${flecha}${chipCuenta(t.ID_Cuenta_Destino)}</span>`;
+    if (t.Tipo_Movimiento === 'Ingreso') return t.ID_Cuenta_Destino ? `<span class="inline-flex items-center">${flecha}${chipCuenta(t.ID_Cuenta_Destino)}</span>` : '-';
+    return t.ID_Cuenta_Origen ? chipCuenta(t.ID_Cuenta_Origen) : '-';
 }
 
 // ---------- Lista de movimientos (paginada de 10 en 10) ----------
@@ -347,7 +375,7 @@ function dibujarMovimientos() {
     document.getElementById('btn_ver_mas').classList.toggle('hidden', !hayMasMovimientos);
     const tbody = document.getElementById('tablaResultados');
     if (movimientosCargados.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-400 italic">Aún no hay movimientos.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-gray-400 italic">Aún no hay movimientos.</td></tr>';
         return;
     }
 
@@ -360,7 +388,7 @@ function dibujarMovimientos() {
         // Concepto: subcategoría para gastos/ingresos, cuentas para traslados
         let concepto = "-";
         if (t.Tipo_Movimiento === 'Traslado') {
-            concepto = `${nombreCuenta(t.ID_Cuenta_Origen)} → ${nombreCuenta(t.ID_Cuenta_Destino)}`;
+            concepto = "Traslado entre cuentas";
         } else if (t.ID_Subcategoria) {
             const sub = todasLasSubcategorias.find(s => s.ID_Subcategoria === t.ID_Subcategoria);
             concepto = sub ? sub.Nombre_Subcategoria : "Desconocido";
@@ -381,6 +409,7 @@ function dibujarMovimientos() {
         <tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors ${t.Anulada ? 'bg-gray-50' : ''} ${t.ID_Transaccion === idEditando ? 'ring-2 ring-amber-300' : ''}">
             <td class="py-4 px-4 text-left whitespace-nowrap ${tachado}">${esc(String(t.Fecha ?? '').slice(0, 10))}</td>
             <td class="py-4 px-4 text-left">${badge}</td>
+            <td class="py-4 px-4 text-left ${t.Anulada ? 'opacity-50' : ''}">${celdaCuenta(t)}</td>
             <td class="py-4 px-4 text-left text-gray-600 ${tachado}">${esc(concepto)}</td>
             <td class="py-4 px-4 text-right font-bold text-gray-800">
                 <span class="${tachado}">${formatoMoneda(t.Monto)}</span>

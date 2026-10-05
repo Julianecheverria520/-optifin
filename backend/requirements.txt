@@ -4,3 +4,5 @@ python-dotenv==1.2.3
 supabase==2.31.0
 # Validar localmente los tokens de Supabase (firma ES256): requiere el extra "crypto"
 PyJWT[crypto]==2.13.0
+# Cliente HTTP propio para Supabase (HTTP/1.1 con reintentos, ver backend/database.py)
+httpx==0.28.1
