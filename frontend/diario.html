@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- App instalable (PWA) -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0a0f0d">
+    <link rel="icon" type="image/png" href="iconos/favicon-32.png">
+    <link rel="apple-touch-icon" href="iconos/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="OptiFin">
+    <title>OptiFin - Día a día</title>
+    <link rel="stylesheet" href="css/tailwind.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        /* Colores de las series (validados para daltonismo sobre la tarjeta clara) */
+        .viz { --serie-fijos: #2a78d6; --serie-diarios: #eb6834; --serie-saldo: #10231d; --rejilla: rgba(16, 35, 29, 0.08); --texto-eje: #71807a; }
+        .chip-cat[aria-pressed="true"] { background: #10231d !important; color: #fff !important; border-color: #10231d !important; }
+        .muestra { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen">
+
+    <aside id="sidebar-container" class="w-64 bg-blue-900 text-white flex flex-col h-full shadow-lg"></aside>
+
+    <main class="flex-1 p-8 overflow-y-auto viz">
+        <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+            <div>
+                <h2 class="text-3xl font-bold text-gray-800">Día a día</h2>
+                <p class="text-gray-500 text-sm">Tus gastos del mes, día por día, y cómo se movió tu dinero.</p>
+            </div>
+            <div class="flex space-x-2">
+                <select id="mesSelect" class="border-gray-300 rounded-md p-2 border font-medium text-gray-700 shadow-sm">
+                    <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+                    <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+                    <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+                    <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+                </select>
+                <select id="anioSelect" class="border-gray-300 rounded-md p-2 border font-medium text-gray-700 shadow-sm"></select>
+            </div>
+        </div>
+
+        <!-- Saldos y totales -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white p-5 rounded-lg shadow-sm">
+                <p class="text-gray-500 text-xs font-semibold uppercase">Saldo inicial</p>
+                <p class="text-2xl font-bold text-gray-800 mt-1" id="d_saldo_inicial">$0</p>
+                <p class="text-xs text-gray-400 mt-1" id="d_saldo_inicial_nota">En cuentas al empezar el mes</p>
+            </div>
+            <div class="bg-white p-5 rounded-lg shadow-sm">
+                <p class="text-gray-500 text-xs font-semibold uppercase" id="d_saldo_final_titulo">Saldo final</p>
+                <p class="text-2xl font-bold text-gray-800 mt-1" id="d_saldo_final">$0</p>
+                <p class="text-xs mt-1 font-semibold" id="d_variacion"></p>
+            </div>
+            <div class="bg-white p-5 rounded-lg shadow-sm">
+                <p class="text-gray-500 text-xs font-semibold uppercase flex items-center gap-1.5"><span class="muestra" style="background: var(--serie-fijos)"></span>Gastos fijos</p>
+                <p class="text-2xl font-bold text-gray-800 mt-1" id="d_fijos">$0</p>
+                <p class="text-xs text-gray-400 mt-1">Arriendo, servicios, cuotas…</p>
+            </div>
+            <div class="bg-white p-5 rounded-lg shadow-sm">
+                <p class="text-gray-500 text-xs font-semibold uppercase flex items-center gap-1.5"><span class="muestra" style="background: var(--serie-diarios)"></span>Gastos diarios</p>
+                <p class="text-2xl font-bold text-gray-800 mt-1" id="d_diarios">$0</p>
+                <p class="text-xs text-gray-400 mt-1" id="d_promedio"></p>
+            </div>
+        </div>
+
+        <!-- Filtro por categoría -->
+        <div class="bg-white p-4 rounded-lg shadow-sm mb-6">
+            <div class="flex flex-wrap items-center gap-2" id="chips_categorias" role="group" aria-label="Filtrar por categoría"></div>
+            <p class="text-xs text-gray-400 mt-2">Elige una o varias categorías. Los saldos de arriba siempre incluyen todo.</p>
+        </div>
+
+        <!-- Gastos por día -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <h3 class="text-lg font-semibold text-gray-800">Gastos por día</h3>
+                <div class="flex items-center gap-4 text-xs text-gray-600">
+                    <span class="flex items-center gap-1.5"><span class="muestra" style="background: var(--serie-fijos)"></span>Fijos</span>
+                    <span class="flex items-center gap-1.5"><span class="muestra" style="background: var(--serie-diarios)"></span>Diarios</span>
+                </div>
+            </div>
+            <div class="relative h-72"><canvas id="grafica_gastos" role="img" aria-label="Gastos por día del mes, fijos y diarios"></canvas></div>
+        </div>
+
+        <!-- Dinero en cuentas -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <h3 class="text-lg font-semibold text-gray-800">Dinero en cuentas al cierre de cada día</h3>
+            <p class="text-xs text-gray-400 mb-4">Cuentas de ahorro, billeteras y efectivo (sin tarjetas de crédito).</p>
+            <div class="relative h-56"><canvas id="grafica_saldo" role="img" aria-label="Dinero en cuentas al cierre de cada día"></canvas></div>
+        </div>
+
+        <!-- Tabla: el mismo dato que las gráficas -->
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Detalle por día</h3>
+            <div class="overflow-x-auto">
+                <table class="min-w-full table-auto text-sm">
+                    <thead>
+                        <tr class="bg-gray-100 text-gray-600 uppercase leading-normal">
+                            <th class="py-3 px-4 text-left">Día</th>
+                            <th class="py-3 px-4 text-right">Fijos</th>
+                            <th class="py-3 px-4 text-right">Diarios</th>
+                            <th class="py-3 px-4 text-right">Total</th>
+                            <th class="py-3 px-4 text-right">Saldo al cierre</th>
+                            <th class="py-3 px-4 text-left">En qué</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla_dias" class="text-gray-700"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script src="js/config.js"></script>
+    <script src="js/pwa.js"></script>
+    <script src="js/sidebar.js"></script>
+    <script>cargarSidebar('diario');</script>
+    <script src="js/vendor/chart.umd.min.js"></script>
+    <script src="js/diario.js"></script>
+</body>
+</html>

@@ -29,3 +29,13 @@ def obtener_resumen(mes: int, anio: int, uid: str = Depends(usuario_actual)):
         "patrimonio": patrimonio,
         "deudas_por_persona": finanzas.deudas_por_persona(datos),
     }
+
+
+@router.get("/diario/{mes}/{anio}")
+def obtener_mes_diario(mes: int, anio: int, uid: str = Depends(usuario_actual)):
+    """Gastos del mes día a día y el dinero en cuentas al inicio, al cierre de cada día y al final."""
+    if not 1 <= mes <= 12:
+        raise HTTPException(status_code=400, detail="El mes debe estar entre 1 y 12")
+    d = finanzas.mes_diario(mes, anio, uid)
+    d["categorias"] = [{"id": i, "nombre": n} for i, n in d["categorias"]]
+    return d

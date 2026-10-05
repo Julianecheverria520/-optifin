@@ -78,6 +78,7 @@ def crear_deuda(deuda: Deuda, uid: str = Depends(usuario_actual)):
         "monto": deuda.monto,
         "fecha_creacion": deuda.fecha_creacion.isoformat(),
         "id_cuenta": deuda.id_cuenta,
+        "descripcion": deuda.descripcion or None,
         "estado": "Pendiente",
     }).execute()
     return {"mensaje": "Deuda registrada", "id_deuda": res.data[0]["id_deuda"]}
@@ -85,17 +86,28 @@ def crear_deuda(deuda: Deuda, uid: str = Depends(usuario_actual)):
 
 @router.put("/{id_deuda}")
 def editar_deuda(id_deuda: int, deuda: Deuda, uid: str = Depends(usuario_actual)):
-    _deuda_propia(id_deuda, uid)
-    _validar_cuenta(deuda.id_cuenta, uid)
-    if deuda.monto < total_abonado(id_deuda):
+    actual = _deuda_propia(id_deuda, uid)
+    if deuda.monto < total_abonado(id_deuda) - 0.005:
         raise HTTPException(status_code=400, detail="El monto no puede ser menor a lo que ya se ha abonado")
-    supabase.table("deudas").update({
-        **_persona(deuda.persona, uid),
-        "tipo_deuda": deuda.tipo_deuda,
-        "monto": deuda.monto,
-        "fecha_creacion": deuda.fecha_creacion.isoformat(),
-        "id_cuenta": deuda.id_cuenta,
-    }).eq("id_deuda", id_deuda).eq("id_usuario", uid).execute()
+
+    cambios = {**_persona(deuda.persona, uid), "monto": deuda.monto, "descripcion": deuda.descripcion or None}
+    origen = actual.get("id_transaccion_origen")
+    if origen:
+        # Parte de un gasto compartido (o pagado por otro): el tipo, la fecha y la cuenta los define
+        # el movimiento. Solo cambian la persona, la nota y, si es "me debe", el valor de su parte.
+        if actual["tipo_deuda"] == "Le debo" and abs(deuda.monto - float(actual["monto"])) > 0.005:
+            raise HTTPException(status_code=400, detail="Este gasto lo pagó otra persona por ti: para cambiar el valor, "
+                                                        "anula el movimiento y regístralo de nuevo.")
+        if actual["tipo_deuda"] == "Me debe":
+            gasto = supabase.table("transacciones").select("monto").eq("id_transaccion", origen).eq("id_usuario", uid).execute().data
+            otras = supabase.table("deudas").select("monto").eq("id_transaccion_origen", origen).eq("id_usuario", uid)                 .eq("tipo_deuda", "Me debe").eq("anulada", False).neq("id_deuda", id_deuda).execute().data or []
+            if gasto and deuda.monto + sum(float(o["monto"]) for o in otras) > float(gasto[0]["monto"]) + 0.005:
+                raise HTTPException(status_code=400, detail=f"Las partes compartidas no pueden superar el gasto (${float(gasto[0]['monto']):,.0f})")
+    else:
+        _validar_cuenta(deuda.id_cuenta, uid)
+        cambios.update({"tipo_deuda": deuda.tipo_deuda, "fecha_creacion": deuda.fecha_creacion.isoformat(), "id_cuenta": deuda.id_cuenta})
+
+    supabase.table("deudas").update(cambios).eq("id_deuda", id_deuda).eq("id_usuario", uid).execute()
     actualizar_estado(id_deuda)
     return {"mensaje": "Deuda actualizada"}
 

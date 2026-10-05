@@ -3,7 +3,7 @@
 // se usa la copia guardada. Así un despliegue nuevo se ve de inmediato.
 // NUNCA se guardan respuestas de la API (datos financieros): solo páginas, scripts, estilos e íconos.
 
-const CACHE = "optifin-v4";
+const CACHE = "optifin-v5";
 const PAGINAS_BASE = ["login.html", "dashboard.html", "index.html", "manifest.json", "css/tailwind.css", "css/styles.css", "iconos/icono-192.png"];
 
 self.addEventListener("install", (evento) => {

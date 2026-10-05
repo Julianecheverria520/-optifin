@@ -81,14 +81,34 @@ function textoDesvio(diferencia) {
     return `${formatoMoneda(Math.abs(diferencia))} ${diferencia > 0 ? 'más' : 'menos'} de lo planeado`;
 }
 
+// De entrada solo se ven los fijos pendientes; los ya pagados/recibidos se muestran con un botón
+let fijosDelMes = [];
+let verFijosPagados = false;
+
+window.alternarFijosPagados = function() {
+    verFijosPagados = !verFijosPagados;
+    dibujarFijos(fijosDelMes);
+};
+
 function dibujarFijos(fijos) {
+    fijosDelMes = fijos;
     const cont = document.getElementById('contenedor_fijos');
+    const boton = document.getElementById('btn_fijos_pagados');
+    const pagados = fijos.filter(f => f.estado === 'pagado').length;
+    boton.classList.toggle('hidden', pagados === 0);
+    boton.innerText = verFijosPagados ? 'Ver solo pendientes' : `Ver todos (${pagados} ${pagados === 1 ? 'pagado' : 'pagados'})`;
+
     if (fijos.length === 0) {
         cont.innerHTML = '<p class="text-gray-500 text-sm italic">No hay ingresos ni gastos fijos activos. Créalos en la sección Presupuesto.</p>';
         return;
     }
+    const visibles = verFijosPagados ? fijos : fijos.filter(f => f.estado !== 'pagado');
+    if (visibles.length === 0) {
+        cont.innerHTML = '<p class="text-green-700 text-sm font-semibold py-2">Todo al día: no tienes pagos ni cobros fijos pendientes este mes.</p>';
+        return;
+    }
 
-    cont.innerHTML = fijos.map(f => {
+    cont.innerHTML = visibles.map(f => {
         const esIngreso = f.tipo_movimiento === 'Ingreso';
         const estado = ESTADOS_FIJO[f.estado];
         const etiqueta = esIngreso ? estado.ingreso : estado.gasto;

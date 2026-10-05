@@ -151,6 +151,7 @@ class Deuda(BaseModel):
     fecha_creacion: date
     # Cuenta de donde salió (presté) o a donde entró (me prestaron) el dinero; None = deuda previa sin movimiento
     id_cuenta: Optional[int] = None
+    descripcion: Optional[Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]] = ""
 
 
 class LiquidacionNueva(BaseModel):

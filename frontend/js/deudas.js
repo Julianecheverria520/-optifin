@@ -91,6 +91,7 @@ function aplicarFiltrosDeUrl() {
         const select = document.getElementById('filtro_persona');
         const opcion = [...select.options].find(o => o.value && normalizar(o.value) === normalizar(persona));
         if (opcion) select.value = opcion.value;
+        personasAbiertas.add(normalizar(persona));
     }
     if (['Me debe', 'Le debo'].includes(params.get('tipo'))) document.getElementById('filtro_tipo').value = params.get('tipo');
     dibujarTodo();
@@ -274,44 +275,93 @@ document.getElementById('btn_limpiar_filtros').addEventListener('click', () => {
 
 // ---------- Tablas ----------
 
+// Radar agrupado por persona (acordeón): arriba el total con cada una, al abrir el detalle de sus deudas
+const personasAbiertas = new Set();
+
+window.alternarPersona = function(clave) {
+    if (personasAbiertas.has(clave)) personasAbiertas.delete(clave); else personasAbiertas.add(clave);
+    dibujarTodo();
+};
+
+function filaDeuda(d) {
+    const pagada = d.Estado === 'Pagada';
+    const meDebe = d.Tipo_Deuda === 'Me debe';
+    const acciones = d.Es_Propia === false
+        // La registró la otra persona: aquí solo se ve; los abonos los registra ella (o se cruzan)
+        ? `<span class="text-xs text-gray-400">Registrada por ${esc(d.Persona)}</span>`
+        : `${pagada ? '' : `<button type="button" onclick="abrirAbono(${d.ID_Deuda})" class="text-green-700 hover:text-green-900 font-bold text-xs bg-green-50 px-3 py-1 rounded-lg">Abonar</button>`}
+           <button type="button" onclick="editarDeuda(${d.ID_Deuda})" class="text-blue-700 hover:text-blue-900 font-bold text-xs bg-blue-50 px-3 py-1 rounded-lg">Editar</button>
+           <button type="button" onclick="eliminarDeuda(${d.ID_Deuda})" class="text-red-600 hover:text-red-800 font-bold text-xs bg-red-50 px-3 py-1 rounded-lg">Eliminar</button>`;
+    return `
+        <div class="py-3 flex flex-wrap items-center justify-between gap-3 ${pagada ? 'opacity-60' : ''}">
+            <div class="min-w-0">
+                <p class="text-sm font-medium text-gray-800">
+                    <span class="${meDebe ? 'text-green-700' : 'text-red-600'} font-bold">${meDebe ? 'Te debe' : 'Le debes'}</span>
+                    ${esc(d.Descripcion || 'Sin nota')}
+                </p>
+                <p class="text-xs text-gray-400">${esc(d.Fecha_Creacion)}${d.ID_Transaccion ? ' · gasto compartido' : ''}${d.ID_Cuenta ? ' · ' + esc(nombreCuenta(d.ID_Cuenta)) : ''}</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 text-sm">
+                <div class="text-right">
+                    <p class="font-bold text-gray-800">${formatoMoneda(d.Saldo_Pendiente)}</p>
+                    <p class="text-xs text-gray-400">de ${formatoMoneda(d.Monto)}${d.Abonado > 0 ? ` · abonado ${formatoMoneda(d.Abonado)}` : ''}</p>
+                </div>
+                <span class="text-xs font-bold px-2 py-1 rounded ${CLASE_ESTADO[d.Estado] || ''}">${esc(d.Estado)}</span>
+                <div class="flex gap-1 whitespace-nowrap">${acciones}</div>
+            </div>
+        </div>`;
+}
+
 function dibujarDeudas(deudas) {
-    const tabla = document.getElementById('tablaDeudas');
+    const cont = document.getElementById('lista_personas');
     if (deudas.length === 0) {
         const mensaje = deudasCargadas.length === 0 ? 'No hay deudas registradas.' : 'No hay deudas con estos filtros.';
-        tabla.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-gray-400 italic">${mensaje}</td></tr>`;
+        cont.innerHTML = `<p class="py-6 text-center text-gray-400 italic">${mensaje}</p>`;
         return;
     }
 
-    // Primero las que tienen saldo pendiente
-    const ordenadas = [...deudas].sort((a, b) => (a.Estado === 'Pagada') - (b.Estado === 'Pagada'));
+    const grupos = new Map();
+    for (const d of deudas) {
+        const clave = normalizar(d.Persona);
+        const g = grupos.get(clave) || { clave, nombre: String(d.Persona).trim(), usuario: false, meDebe: 0, leDebo: 0, pendientes: 0, deudas: [] };
+        g.usuario = g.usuario || Boolean(d.ID_Usuario_Contraparte);
+        if (d.Tipo_Deuda === 'Me debe') g.meDebe += d.Saldo_Pendiente; else g.leDebo += d.Saldo_Pendiente;
+        if (d.Estado !== 'Pagada') g.pendientes++;
+        g.deudas.push(d);
+        grupos.set(clave, g);
+    }
+    // Con una sola persona en pantalla (p. ej. filtrada), su detalle se abre solo
+    if (grupos.size === 1) personasAbiertas.add([...grupos.keys()][0]);
 
-    tabla.innerHTML = ordenadas.map(d => {
-        const pagada = d.Estado === 'Pagada';
+    const ordenados = [...grupos.values()].sort((a, b) =>
+        Math.abs(b.meDebe - b.leDebo) - Math.abs(a.meDebe - a.leDebo) || a.nombre.localeCompare(b.nombre));
+    cont.innerHTML = ordenados.map(g => {
+        const neto = g.meDebe - g.leDebo;
+        const abierto = personasAbiertas.has(g.clave);
+        const resumen = Math.abs(neto) < 0.5
+            ? '<span class="text-gray-500 font-bold">A paz y salvo</span>'
+            : `<span class="font-bold ${neto > 0 ? 'text-green-700' : 'text-red-600'}">${neto > 0 ? 'Te debe' : 'Le debes'} ${formatoMoneda(Math.abs(neto))}</span>`;
+        const desglose = g.meDebe > 0 && g.leDebo > 0
+            ? `<span class="block text-xs text-gray-400">Te debe ${formatoMoneda(g.meDebe)} · le debes ${formatoMoneda(g.leDebo)}</span>` : '';
+        const deudasOrdenadas = [...g.deudas].sort((a, b) =>
+            (a.Estado === 'Pagada') - (b.Estado === 'Pagada') || String(b.Fecha_Creacion).localeCompare(String(a.Fecha_Creacion)));
         return `
-        <tr class="border-b hover:bg-gray-100 ${pagada ? 'opacity-50' : ''}">
-            <td class="py-3 px-6">
-                <span class="font-medium">${esc(d.Persona)}</span>
-                ${d.ID_Usuario_Contraparte ? '<span class="ml-1 text-[10px] font-bold uppercase bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Usuario OptiFin</span>' : ''}
-                ${d.Descripcion || d.ID_Transaccion ? `<span class="block text-xs text-gray-400">${esc(d.Descripcion || '')}${d.ID_Transaccion ? ' · gasto compartido' : ''}</span>` : ''}
-            </td>
-            <td class="py-3 px-6">
-                <span class="${d.Tipo_Deuda === 'Me debe' ? 'bg-green-100 text-green-800 border border-green-300' : 'bg-red-100 text-red-800 border border-red-300'} py-1 px-3 rounded text-xs font-bold">
-                    ${esc(d.Tipo_Deuda)}
-                </span>
-            </td>
-            <td class="py-3 px-6">${formatoMoneda(d.Monto)}</td>
-            <td class="py-3 px-6">${formatoMoneda(d.Abonado)}</td>
-            <td class="py-3 px-6 font-bold">${formatoMoneda(d.Saldo_Pendiente)}</td>
-            <td class="py-3 px-6">${esc(d.Fecha_Creacion)}</td>
-            <td class="py-3 px-6"><span class="text-xs font-bold px-2 py-1 rounded ${CLASE_ESTADO[d.Estado] || ''}">${esc(d.Estado)}</span></td>
-            <td class="py-3 px-6 whitespace-nowrap">
-                ${d.Es_Propia === false
-                    // La registró la otra persona: aquí solo se ve; los abonos los registra ella (o se cruzan)
-                    ? `<span class="text-xs text-gray-400">Registrada por ${esc(d.Persona)}</span>`
-                    : `${pagada ? '' : `<button type="button" onclick="abrirAbono(${d.ID_Deuda})" class="text-green-700 hover:text-green-900 font-bold text-xs bg-green-50 px-3 py-1 rounded-lg">Abonar</button>`}
-                       <button type="button" onclick="eliminarDeuda(${d.ID_Deuda})" class="text-red-600 hover:text-red-800 font-bold text-xs bg-red-50 px-3 py-1 rounded-lg ml-1">Eliminar</button>`}
-            </td>
-        </tr>`;
+            <div class="rounded-xl border border-gray-200 overflow-hidden">
+                <button type="button" onclick="alternarPersona('${esc(g.clave)}')" aria-expanded="${abierto}" class="w-full flex flex-wrap items-center justify-between gap-3 p-4 text-left hover:bg-gray-50">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <svg class="w-4 h-4 text-gray-400 shrink-0 transition-transform ${abierto ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                        <div class="min-w-0">
+                            <p class="font-semibold text-gray-800 truncate">${esc(g.nombre)}
+                                ${g.usuario ? '<span class="ml-1 text-[10px] font-bold uppercase bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Usuario OptiFin</span>' : ''}</p>
+                            <p class="text-xs text-gray-400">${g.pendientes} ${g.pendientes === 1 ? 'deuda pendiente' : 'deudas pendientes'} · ${g.deudas.length} en total</p>
+                        </div>
+                    </div>
+                    <div class="text-right text-sm">${resumen}${desglose}</div>
+                </button>
+                <div class="${abierto ? '' : 'hidden'} border-t border-gray-100 px-4 divide-y divide-gray-100">
+                    ${deudasOrdenadas.map(filaDeuda).join('')}
+                </div>
+            </div>`;
     }).join('');
 }
 
@@ -408,11 +458,58 @@ window.eliminarDeuda = async function(id) {
     try {
         await api(`${RUTA_DEUDAS}${id}`, { method: "DELETE" });
         if (idDeudaAbonando === id) cerrarAbono();
+        if (idDeudaEditando === id) salirDeEdicionDeuda();
         cargarTodo();
     } catch (err) {
         alert(err.message);
     }
 }
+
+// ---------- Formulario: registrar o editar ----------
+
+let idDeudaEditando = null;
+const CAMPOS_DEL_MOVIMIENTO = ['tipo_deuda', 'fecha_deuda', 'cuenta_deuda'];
+
+window.editarDeuda = function(id) {
+    const d = deudasCargadas.find(x => x.ID_Deuda === id);
+    if (!d) return;
+    idDeudaEditando = id;
+    document.getElementById('persona_deuda').value = d.Persona;
+    document.getElementById('tipo_deuda').value = d.Tipo_Deuda;
+    document.getElementById('monto_deuda').value = d.Monto;
+    document.getElementById('fecha_deuda').value = String(d.Fecha_Creacion).slice(0, 10);
+    document.getElementById('cuenta_deuda').value = d.ID_Cuenta || '';
+    document.getElementById('nota_deuda').value = d.Descripcion || '';
+
+    // Las deudas de un gasto compartido siguen a su movimiento: tipo, fecha y cuenta no se cambian aquí
+    const vinculada = Boolean(d.ID_Transaccion);
+    const pagadaPorOtro = vinculada && d.Tipo_Deuda === 'Le debo';
+    for (const campo of CAMPOS_DEL_MOVIMIENTO) document.getElementById(campo).disabled = vinculada;
+    document.getElementById('monto_deuda').disabled = pagadaPorOtro;
+    const aviso = document.getElementById('aviso_deuda_vinculada');
+    aviso.classList.toggle('hidden', !vinculada);
+    aviso.innerText = pagadaPorOtro
+        ? 'Esta deuda viene de un gasto que otra persona pagó por ti: aquí puedes cambiar la persona y la nota. Para cambiar el valor, anula el movimiento y regístralo de nuevo.'
+        : 'Esta deuda es una parte de un gasto compartido: puedes cambiar la persona, el valor de su parte y la nota. La fecha sigue a la del movimiento.';
+
+    document.getElementById('titulo_form_deuda').innerText = 'Editar Deuda';
+    document.getElementById('btn_guardar_deuda').innerText = 'Guardar cambios';
+    document.getElementById('btn_cancelar_deuda').classList.remove('hidden');
+    document.getElementById('deudasForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+
+function salirDeEdicionDeuda() {
+    idDeudaEditando = null;
+    document.getElementById('deudasForm').reset();
+    for (const campo of [...CAMPOS_DEL_MOVIMIENTO, 'monto_deuda']) document.getElementById(campo).disabled = false;
+    document.getElementById('aviso_deuda_vinculada').classList.add('hidden');
+    document.getElementById('titulo_form_deuda').innerText = 'Registrar Deuda';
+    document.getElementById('btn_guardar_deuda').innerText = 'Registrar en Radar';
+    document.getElementById('btn_cancelar_deuda').classList.add('hidden');
+    document.getElementById('fecha_deuda').value = fechaHoyISO();
+}
+
+document.getElementById('btn_cancelar_deuda').addEventListener('click', salirDeEdicionDeuda);
 
 document.getElementById('deudasForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -423,11 +520,15 @@ document.getElementById('deudasForm').addEventListener('submit', async (e) => {
         monto: parseFloat(document.getElementById('monto_deuda').value),
         fecha_creacion: document.getElementById('fecha_deuda').value,
         id_cuenta: cuenta ? parseInt(cuenta) : null,
+        descripcion: document.getElementById('nota_deuda').value,
     };
     try {
-        await api(RUTA_DEUDAS, { method: "POST", body: d });
-        document.getElementById('deudasForm').reset();
-        document.getElementById('fecha_deuda').value = fechaHoyISO();
+        if (idDeudaEditando) {
+            await api(`${RUTA_DEUDAS}${idDeudaEditando}`, { method: "PUT", body: d });
+        } else {
+            await api(RUTA_DEUDAS, { method: "POST", body: d });
+        }
+        salirDeEdicionDeuda();
         cargarTodo();
     } catch (err) {
         alert(err.message);

@@ -93,7 +93,7 @@ main h2 + p {
 }
 
 /* Barra superior interna */
-main header.sticky,
+main header.encabezado-pagina,
 main > div:first-child.flex.flex-wrap.justify-between {
   border: 1px solid var(--line);
   background: rgba(255, 253, 249, 0.72);

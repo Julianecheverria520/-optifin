@@ -44,6 +44,7 @@ class Datos:
             "deudas_propias": lambda: _fetch("deudas", uid, anulada=False),
             "deudas_ajenas": lambda: (supabase.table("deudas").select("*").eq("id_usuario_contraparte", uid)
                                       .neq("id_usuario", uid).eq("anulada", False).execute().data or []),
+            "categorias": lambda: _fetch("categorias", uid),
             "subcategorias": lambda: _fetch("subcategorias", uid),
             "planificacion": lambda: _fetch("planificacion", uid),
             "ajustes": lambda: _fetch("ajustes_mes", uid),
@@ -222,32 +223,43 @@ def gastos_compartidos_conmigo(usuario) -> list[dict]:
 
 # ---------- Cuentas ----------
 
-def saldos_cuentas(usuario) -> list[dict]:
-    """Saldo actual = saldo inicial + ingresos - gastos ± traslados ± préstamos y abonos de deudas."""
-    datos = _datos(usuario).precargar("cuentas", "transacciones", "deudas_propias", "deudas_ajenas")
-    movimiento = defaultdict(float)
+def _eventos_cuentas(datos: "Datos") -> list[tuple]:
+    """Cada movimiento de dinero en una cuenta: (fecha, id_cuenta, +entra / -sale).
+    Ingresos, gastos, traslados, préstamos con cuenta y abonos con cuenta."""
+    eventos = []
     for t in datos.transacciones:
-        m, tipo = _monto(t), t.get("tipo_movimiento")
+        m, tipo, f = _monto(t), t.get("tipo_movimiento"), _fecha(t.get("fecha"))
         if tipo == "Ingreso" and t.get("id_cuenta_destino"):
-            movimiento[t["id_cuenta_destino"]] += m
+            eventos.append((f, t["id_cuenta_destino"], m))
         elif tipo == "Gasto" and t.get("id_cuenta_origen"):
-            movimiento[t["id_cuenta_origen"]] -= m
+            eventos.append((f, t["id_cuenta_origen"], -m))
         elif tipo == "Traslado":
             if t.get("id_cuenta_origen"):
-                movimiento[t["id_cuenta_origen"]] -= m
+                eventos.append((f, t["id_cuenta_origen"], -m))
             if t.get("id_cuenta_destino"):
-                movimiento[t["id_cuenta_destino"]] += m
+                eventos.append((f, t["id_cuenta_destino"], m))
 
     # Préstamos con cuenta: si presté ("Me debe") salió dinero; si me prestaron ("Le debo") entró
     tipo_deuda = {d["id_deuda"]: d["tipo_deuda"] for d in datos.deudas_propias}
     for d in datos.deudas_propias:
         if d.get("id_cuenta"):
-            movimiento[d["id_cuenta"]] += -_monto(d) if d["tipo_deuda"] == "Me debe" else _monto(d)
+            eventos.append((_fecha(d.get("fecha_creacion")), d["id_cuenta"], -_monto(d) if d["tipo_deuda"] == "Me debe" else _monto(d)))
 
     # Abonos con cuenta (los registra el dueño de la deuda): si me pagan entra dinero; si yo pago sale
     for a in datos.abonos:
         if a.get("id_cuenta") and a["id_usuario"] == datos.uid:
-            movimiento[a["id_cuenta"]] += _monto(a) if tipo_deuda.get(a["id_deuda"]) == "Me debe" else -_monto(a)
+            eventos.append((_fecha(a.get("fecha")), a["id_cuenta"], _monto(a) if tipo_deuda.get(a["id_deuda"]) == "Me debe" else -_monto(a)))
+    return eventos
+
+
+def saldos_cuentas(usuario, hasta: date | None = None) -> list[dict]:
+    """Saldo = saldo inicial + ingresos - gastos ± traslados ± préstamos y abonos de deudas.
+    Con `hasta`, el saldo al final de ese día (solo movimientos con fecha <= hasta)."""
+    datos = _datos(usuario).precargar("cuentas", "transacciones", "deudas_propias", "deudas_ajenas")
+    movimiento = defaultdict(float)
+    for f, cuenta, delta in _eventos_cuentas(datos):
+        if hasta is None or f is None or f <= hasta:
+            movimiento[cuenta] += delta
 
     return [{
         "id_cuenta": c["id_cuenta"],
@@ -438,4 +450,69 @@ def patrimonio(usuario) -> dict:
         "me_deben": me_deben,
         "debo": debo,
         "neto": en_cuentas + tarjetas + me_deben - debo,
+    }
+
+
+# ---------- Mes día a día ----------
+
+def mes_diario(mes: int, anio: int, usuario, hoy: date | None = None) -> dict:
+    """Gastos del mes día a día (fijos vs. diarios, con su categoría) y el dinero en cuentas
+    (sin tarjetas de crédito) al inicio del mes y al final de cada día."""
+    datos = _datos(usuario).precargar()
+    hoy = hoy or date.today()
+    ultimo_dia = calendar.monthrange(anio, mes)[1]
+    inicio, fin = date(anio, mes, 1), date(anio, mes, ultimo_dia)
+
+    # Gasto "fijo" = de una subcategoría que tiene un gasto fijo planeado y vigente este mes
+    subs_fijas = {p.get("id_subcategoria") for p in datos.planificacion
+                  if str(p.get("activo")).lower() != "no" and vigente(p, anio, mes)
+                  and p.get("tipo") not in (TIPO_PRESUPUESTO, "Ingreso Fijo")}
+    subcategoria = {s["id_subcategoria"]: s for s in datos.subcategorias}
+    categoria = {c["id_categoria"]: c["nombre_categoria"] for c in datos.categorias}
+    compartido = compartido_por_transaccion(datos)
+
+    gastos, ingresos = [], 0.0
+    for t in datos.transacciones + gastos_compartidos_conmigo(datos):
+        f = _fecha(t.get("fecha"))
+        if not f or not inicio <= f <= fin:
+            continue
+        if t.get("tipo_movimiento") == "Ingreso":
+            ingresos += _monto(t)
+        elif t.get("tipo_movimiento") == "Gasto":
+            sub = subcategoria.get(t.get("id_subcategoria")) or {}
+            gastos.append({
+                "dia": f.day,
+                "monto": _monto(t) - compartido.get(t["id_transaccion"], 0.0),  # solo mi parte
+                "fijo": t.get("id_subcategoria") in subs_fijas,
+                "id_categoria": sub.get("id_categoria"),
+                "categoria": categoria.get(sub.get("id_categoria"), "Sin categoría"),
+                "subcategoria": sub.get("nombre_subcategoria", "Sin subcategoría"),
+                "descripcion": t.get("descripcion") or "",
+            })
+
+    # Dinero en cuentas (sin crédito): antes del día 1 y al cierre de cada día ya transcurrido
+    no_credito = {c["id_cuenta"] for c in datos.cuentas if c.get("tipo_cuenta") != "Crédito"}
+    base = sum(_float(c.get("saldo_inicial")) for c in datos.cuentas if c["id_cuenta"] in no_credito)
+    eventos = [(f, delta) for f, cuenta, delta in _eventos_cuentas(datos) if cuenta in no_credito]
+    saldo_inicial = base + sum(delta for f, delta in eventos if f is None or f < inicio)
+    por_dia = defaultdict(float)
+    for f, delta in eventos:
+        if f and inicio <= f <= fin:
+            por_dia[f.day] += delta
+
+    ultimo_real = ultimo_dia if fin <= hoy else (hoy.day if inicio <= hoy else 0)
+    saldos, acumulado = [], saldo_inicial
+    for dia in range(1, ultimo_dia + 1):
+        acumulado += por_dia[dia]
+        saldos.append(round(acumulado, 2) if dia <= ultimo_real else None)
+
+    return {
+        "mes": mes, "anio": anio, "dias": ultimo_dia, "hoy": hoy.day if (anio, mes) == (hoy.year, hoy.month) else None,
+        "saldo_inicial": saldo_inicial,
+        "saldo_final": saldos[ultimo_real - 1] if ultimo_real else saldo_inicial,
+        "saldo_final_es_hoy": 0 < ultimo_real < ultimo_dia,
+        "ingresos": ingresos,
+        "saldos": saldos,
+        "gastos": sorted(gastos, key=lambda g: g["dia"]),
+        "categorias": sorted({(g["id_categoria"], g["categoria"]) for g in gastos}, key=lambda c: c[1]),
     }
